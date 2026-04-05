@@ -522,9 +522,9 @@ tbody tr:hover td{background:rgba(30,37,53,.7);color:var(--text)}
 <body>
 <div id="root"></div>
 
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js"></script>
 
 <script type="text/babel">
 /* ============================================================
@@ -1475,7 +1475,7 @@ function CostDashboard({ inflationRate, marginAbove, batches }) {
               : (
                 <div key={i} className="pc-item" style={item[0]==='Wholesale'?{background:'rgba(245,166,35,.05)'}:{}}>
                   <div className="pc-item-label">{item[0]}</div>
-                  <div className="pc-item-value">₦{fmt(item[1] as number,2)}</div>
+                  <div className="pc-item-value">₦{fmt(Number(item[1]),2)}</div>
                   <div className="pc-item-sub">{item[2]}</div>
                 </div>
               )
