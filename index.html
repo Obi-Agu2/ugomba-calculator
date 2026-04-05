@@ -642,7 +642,7 @@ function canByPosition(user, minPos) {
 function App() {
   const [user, setUser] = useState(() => SS.get(null));
   const [page, setPage] = useState('dashboard');
-  const [users, setUsers] = useState(() => LS.get('users', SEED_USERS));
+  const [users, setUsers] = useState(SEED_USERS);
   const [inventory, setInventory] = useState(() => LS.get('inventory', SEED_INVENTORY));
   const [batches, setBatches] = useState(() => LS.get('batches', SEED_BATCHES));
   const [auditLog, setAuditLog] = useState(() => LS.get('audit', SEED_AUDIT));
