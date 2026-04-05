@@ -551,6 +551,8 @@ const SS = {
 try { localStorage.removeItem('unr_session'); } catch {}
 /* Clear sessionStorage session on every fresh page load */
 try { sessionStorage.removeItem('unr_session'); } catch {}
+/* Force clear all cached users to always use fresh seed data */
+try { localStorage.removeItem('unr_users'); } catch {}
 
 /* ── CONSTANTS ── */
 const POSITION_LEVELS = { SuperAdmin:7, CEO:6, Director:5, Manager:4, Supervisor:3, 'Lab Technician':2, Secretary:1 };
