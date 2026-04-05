@@ -542,6 +542,15 @@ const LS = {
   get: (k, def) => { try { const v = localStorage.getItem('unr_'+k); return v ? JSON.parse(v) : def; } catch { return def; } },
   set: (k, v) => { try { localStorage.setItem('unr_'+k, JSON.stringify(v)); } catch {} },
 };
+/* Session storage — clears when browser tab/window closes */
+const SS = {
+  get: (def) => { try { const v = sessionStorage.getItem('unr_session'); return v ? JSON.parse(v) : def; } catch { return def; } },
+  set: (v) => { try { if (v) sessionStorage.setItem('unr_session', JSON.stringify(v)); else sessionStorage.removeItem('unr_session'); } catch {} },
+};
+/* Clear any old persisted session from localStorage on every page load */
+try { localStorage.removeItem('unr_session'); } catch {}
+/* Clear sessionStorage session on every fresh page load */
+try { sessionStorage.removeItem('unr_session'); } catch {}
 
 /* ── CONSTANTS ── */
 const POSITION_LEVELS = { SuperAdmin:7, CEO:6, Director:5, Manager:4, Supervisor:3, 'Lab Technician':2, Secretary:1 };
@@ -575,7 +584,7 @@ const DEFAULT_PERMISSIONS = {
 };
 
 const SEED_USERS = [
-  { id:'u1', name:'Super Administrator', email:'superadmin@ugomba.com', password:'super123', role:'superadmin', position:'SuperAdmin', custom_role:'full_access', active:true, created:'2024-01-01' },
+  { id:'u1', name:'Super Administrator', email:'drogbuneke@gmail.com', password:'super123', role:'superadmin', position:'SuperAdmin', custom_role:'full_access', active:true, created:'2024-01-01' },
   { id:'u2', name:'Admin (CEO)', email:'admin@ugomba.com', password:'admin123', role:'admin', position:'CEO', custom_role:'full_access', active:true, created:'2024-01-01' },
   { id:'u3', name:'Production Manager', email:'manager@ugomba.com', password:'mgr123', role:'user', position:'Manager', custom_role:'manager_role', active:true, created:'2024-01-15' },
   { id:'u4', name:'Lab Technician', email:'lab@ugomba.com', password:'lab123', role:'user', position:'Lab Technician', custom_role:'lab_tech_role', active:true, created:'2024-02-01' },
@@ -631,7 +640,7 @@ function canByPosition(user, minPos) {
    ROOT APP
 ══════════════════════════════════════════════════════════ */
 function App() {
-  const [user, setUser] = useState(() => LS.get('session', null));
+  const [user, setUser] = useState(() => SS.get(null));
   const [page, setPage] = useState('dashboard');
   const [users, setUsers] = useState(() => LS.get('users', SEED_USERS));
   const [inventory, setInventory] = useState(() => LS.get('inventory', SEED_INVENTORY));
@@ -649,7 +658,7 @@ function App() {
   useEffect(() => { LS.set('audit', auditLog); }, [auditLog]);
   useEffect(() => { LS.set('inflation', inflationRate); }, [inflationRate]);
   useEffect(() => { LS.set('margin', marginAbove); }, [marginAbove]);
-  useEffect(() => { if (user) LS.set('session', user); }, [user]);
+  useEffect(() => { SS.set(user); }, [user]);
 
   const showToast = (msg, type='success') => {
     setToast({msg, type});
@@ -673,7 +682,7 @@ function App() {
 
   const logout = () => {
     addAudit(`User "${user?.name}" signed out`,'info','auth');
-    setUser(null); LS.set('session', null);
+    setUser(null); SS.set(null);
     setPage('dashboard');
   };
 
@@ -842,20 +851,8 @@ function LoginPage({ onLogin, error, users }) {
           Sign In to Platform
         </button>
 
-        <hr className="login-divider" style={{margin:'28px 0'}}/>
-        <div className="demo-grid">
-          <button className="demo-btn superadmin" onClick={()=>quick('superadmin@ugomba.com','super123')}>
-            ⬡ Super Admin<div className="db-role">Full system control</div>
-          </button>
-          <button className="demo-btn admin" onClick={()=>quick('admin@ugomba.com','admin123')}>
-            ◎ Admin / CEO<div className="db-role">Full operations</div>
-          </button>
-          <button className="demo-btn" onClick={()=>quick('manager@ugomba.com','mgr123')}>
-            ◈ Manager<div className="db-role">Approvals & reports</div>
-          </button>
-          <button className="demo-btn" onClick={()=>quick('lab@ugomba.com','lab123')}>
-            ⬡ Lab Technician<div className="db-role">Calculators only</div>
-          </button>
+        <div style={{fontSize:11,color:'var(--text3)',textAlign:'center',marginTop:16}}>
+          Contact your administrator if you need access.
         </div>
       </div>
     </div>
