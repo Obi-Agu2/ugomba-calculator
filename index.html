@@ -2,11 +2,25 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<title>Ugomba Noel — Oil Refinery Operations Platform</title>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/>
+<title>Ugomba Noel Ltd — Oil Refinery Operations Platform</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⬡</text></svg>"/>
+
+<!-- PWA: installable on iPhone, Android & tablets -->
+<link rel="manifest" href="manifest.webmanifest"/>
+<meta name="theme-color" content="#0f1117"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="Ugomba Noel"/>
+<meta name="application-name" content="Ugomba Noel Ltd"/>
+<link rel="apple-touch-icon" href="apple-touch-icon.png"/>
+
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<!-- PDF export engine (downloadable + printable reports) -->
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
 <style>
 /* ===== RESET & VARIABLES ===== */
 *{box-sizing:border-box;margin:0;padding:0}
@@ -517,11 +531,39 @@ tbody tr:hover td{background:rgba(30,37,53,.7);color:var(--text)}
   .form-grid.cols-2,.form-grid.cols-3,.form-grid.cols-4{grid-template-columns:1fr}
   .result-grid{grid-template-columns:1fr}
   .login-card{padding:28px 20px;width:95%}
+  .page-heading{font-size:18px}
+  .topbar{padding:0 12px}
+  .topbar-alert{display:none}
+}
+
+/* ===== PWA / MOBILE (iPhone, Android, tablets) ===== */
+html{-webkit-text-size-adjust:100%}
+body{-webkit-tap-highlight-color:rgba(245,166,35,.15);overscroll-behavior-y:none}
+.app-shell{height:100dvh}
+.sidebar{padding-bottom:env(safe-area-inset-bottom)}
+.topbar{padding-top:env(safe-area-inset-top)}
+.page-content{padding-bottom:calc(24px + env(safe-area-inset-bottom));-webkit-overflow-scrolling:touch}
+@media(max-width:900px){
+  input,select,textarea{font-size:16px;padding:10px 12px} /* 16px prevents iOS auto-zoom; larger touch targets */
+  .btn{padding:9px 14px}
+  .table-wrap{-webkit-overflow-scrolling:touch}
 }
 </style>
 </head>
 <body>
 <div id="root"></div>
+
+<script>
+/* Register the service worker for offline/installable PWA support.
+   SWs require https or localhost; fails silently elsewhere (e.g. file://). */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('sw.js').catch(function (err) {
+      console.warn('Service worker registration failed:', err);
+    });
+  });
+}
+</script>
 
 <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -529,13 +571,17 @@ tbody tr:hover td{background:rgba(30,37,53,.7);color:var(--text)}
 
 <script type="text/babel">
 /* ============================================================
-   UGOMBA NOEL VEGETABLE OIL REFINERY — OPERATIONS PLATFORM
-   v2.1.0 — Full deployable build
+   UGOMBA NOEL LTD — OPERATIONS PLATFORM
+   v2.2.0 — Full deployable build (installable PWA)
    Auth: SuperAdmin / Admin / Manager / Lab Tech / Secretary
    Modules: NaOH · Phosphoric · Vitamin A · Cost · Price Setting
             Approval · Inventory · Analytics · NAFDAC · Audit · Roles
    v2.1: Vitamin A units fix · admin edit/delete/archive · pro reports
          · price-setting calculator · weekly competitor benchmark
+   v2.2: PWA (installable, mobile) · downloadable+printable PDF reports
+         · inventory expiry tracking · diesel-based power costing
+         · labour absorption by batch · phosphoric/citric/both acid
+         · expected-profit by output volume · company name UGOMBA NOEL LTD
    ============================================================ */
 
 const { useState, useEffect, useCallback, useMemo, useRef } = React;
@@ -558,6 +604,8 @@ try { sessionStorage.removeItem('unr_session'); } catch {}
 try { localStorage.removeItem('unr_users'); } catch {}
 
 /* ── CONSTANTS ── */
+const COMPANY = 'UGOMBA NOEL LTD';
+const COMPANY_SUB = 'Vegetable Oil Refinery · Operations Platform';
 const POSITION_LEVELS = { SuperAdmin:7, CEO:6, Director:5, Manager:4, Supervisor:3, 'Lab Technician':2, Secretary:1 };
 const OIL_FACTORS = { 'Palm Oil':1.0, 'Soybean Oil':0.98, 'Sunflower Oil':0.96, 'Groundnut Oil':1.02, 'Canola Oil':0.97 };
 
@@ -619,12 +667,12 @@ const SEED_USERS = [
 ];
 
 const SEED_INVENTORY = [
-  { id:'i1', chemical:'NaOH (Caustic Soda)', category:'Base Chemical', stock:450, unit:'kg', min_stock:50, cost_per_unit:1200, supplier:'Chemical Supplies Ltd' },
-  { id:'i2', chemical:'Phosphoric Acid (85%)', category:'Acid', stock:120, unit:'L', min_stock:20, cost_per_unit:3500, supplier:'Agro Chemicals Nig' },
-  { id:'i3', chemical:'Vitamin A Concentrate', category:'Fortifier', stock:8.5, unit:'kg', min_stock:1, cost_per_unit:85000, supplier:'Vitafoods Int\'l' },
-  { id:'i4', chemical:'Bleaching Earth', category:'Adsorbent', stock:600, unit:'kg', min_stock:100, cost_per_unit:450, supplier:'Earth Sciences Ltd' },
-  { id:'i5', chemical:'Filter Aid (Celite)', category:'Filtration', stock:200, unit:'kg', min_stock:30, cost_per_unit:800, supplier:'Industrial Filters Co' },
-  { id:'i6', chemical:'Citric Acid', category:'Acid', stock:45, unit:'kg', min_stock:10, cost_per_unit:2200, supplier:'Chemical Supplies Ltd' },
+  { id:'i1', chemical:'NaOH (Caustic Soda)', category:'Base Chemical', stock:450, unit:'kg', min_stock:50, cost_per_unit:1200, supplier:'Chemical Supplies Ltd', expiry_date:'2027-03-31' },
+  { id:'i2', chemical:'Phosphoric Acid (85%)', category:'Acid', stock:120, unit:'L', min_stock:20, cost_per_unit:3500, supplier:'Agro Chemicals Nig', expiry_date:'2026-09-30' },
+  { id:'i3', chemical:'Vitamin A Concentrate', category:'Fortifier', stock:8.5, unit:'kg', min_stock:1, cost_per_unit:85000, supplier:'Vitafoods Int\'l', expiry_date:'2026-08-10' },
+  { id:'i4', chemical:'Bleaching Earth', category:'Adsorbent', stock:600, unit:'kg', min_stock:100, cost_per_unit:450, supplier:'Earth Sciences Ltd', expiry_date:'2028-01-01' },
+  { id:'i5', chemical:'Filter Aid (Celite)', category:'Filtration', stock:200, unit:'kg', min_stock:30, cost_per_unit:800, supplier:'Industrial Filters Co', expiry_date:'2027-06-30' },
+  { id:'i6', chemical:'Citric Acid', category:'Acid', stock:45, unit:'kg', min_stock:10, cost_per_unit:2200, supplier:'Chemical Supplies Ltd', expiry_date:'2026-12-31' },
 ];
 
 const SEED_BATCHES = [
@@ -663,6 +711,16 @@ function mostRecentTuesday(d=new Date()){
 }
 function nextTuesday(d=new Date()){
   const t = mostRecentTuesday(d); const n = new Date(t); n.setDate(n.getDate()+7); return n;
+}
+/* Expiry evaluation for inventory items. Returns kind + days-to-expiry. */
+function expiryStatus(dateStr, warnDays=60){
+  if (!dateStr) return { kind:'none', days:null };
+  const d = new Date(dateStr + 'T00:00:00'); if (isNaN(d)) return { kind:'none', days:null };
+  const today = new Date(); today.setHours(0,0,0,0);
+  const days = Math.round((d - today)/86400000);
+  if (days < 0) return { kind:'bad', days };
+  if (days <= warnDays) return { kind:'warn', days };
+  return { kind:'ok', days };
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -705,32 +763,162 @@ const REPORT_CSS = `
   @media print{@page{margin:14mm} .sheet{padding:0;max-width:none} .no-print{display:none} table.rpt tr{break-inside:avoid} h2.rpt-sec{break-after:avoid}
     *{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 `;
-function rptStatus(text, kind='neutral'){ return `<span class="pill ${kind}">${esc(text)}</span>`; }
-function rptKpis(items){
-  return `<div class="kpis">${items.map(i=>`<div class="kpi"><div class="k-l">${esc(i.label)}</div><div class="k-v">${i.raw?i.value:esc(i.value)}</div>${i.sub?`<div class="k-s">${esc(i.sub)}</div>`:''}</div>`).join('')}</div>`;
+/* Neutral cell / status model shared by the HTML (print) and PDF emitters.
+   Cell forms: string | number | {num:true,text} | {status:'ok|warn|bad|info|neutral', text}
+   Section forms: {kpis:[{label,value,sub}]} | {title, head:[...], rows:[[cell]]} | {note} */
+const RPT_KINDS = {
+  ok:      { pdf:[26,127,67] },
+  warn:    { pdf:[154,98,18] },
+  bad:     { pdf:[178,48,37] },
+  info:    { pdf:[28,95,176] },
+  neutral: { pdf:[74,82,98] },
+};
+const reportMetaBase = (user) => [['Generated', nowStr()], ['Prepared by', user?`${user.name} (${user.position})`:'System']];
+
+/* ---- HTML (printable) rendering ---- */
+function htmlCell(c){
+  if (c && typeof c==='object'){
+    if (c.status) return `<td><span class="pill ${c.status}">${esc(c.text)}</span></td>`;
+    if (c.num)    return `<td class="num">${esc(c.text)}</td>`;
+  }
+  return `<td>${esc(c)}</td>`;
 }
-function rptTable(headers, rows){
-  const th = headers.map(h=>{const label=typeof h==='object'?h.label:h;const num=typeof h==='object'&&h.num;return `<th class="${num?'num':''}">${esc(label)}</th>`;}).join('');
-  const tb = rows.map(r=>`<tr>${r.map(c=>{const raw=c&&typeof c==='object'&&'html'in c;const num=c&&typeof c==='object'&&c.num;const val=raw?c.html:(c&&typeof c==='object'?c.text:c);return `<td class="${num?'num':''}">${raw?val:esc(val)}</td>`;}).join('')}</tr>`).join('');
-  return `<table class="rpt"><thead><tr>${th}</tr></thead><tbody>${tb||`<tr><td colspan="${headers.length}" style="text-align:center;color:#7a8290;padding:18px">No records</td></tr>`}</tbody></table>`;
+function htmlTable(head, rows){
+  const th = head.map(h=>{const o=typeof h==='object';return `<th class="${o&&h.num?'num':''}">${esc(o?h.label:h)}</th>`;}).join('');
+  const tb = rows.length ? rows.map(r=>`<tr>${r.map(htmlCell).join('')}</tr>`).join('')
+    : `<tr><td colspan="${head.length}" style="text-align:center;color:#7a8290;padding:18px">No records</td></tr>`;
+  return `<table class="rpt"><thead><tr>${th}</tr></thead><tbody>${tb}</tbody></table>`;
 }
-function openPrintableReport(meta, bodyHtml){
+function sectionsToHtml(sections){
+  return sections.map(s=>{
+    if (s.kpis) return `<div class="kpis">${s.kpis.map(i=>`<div class="kpi"><div class="k-l">${esc(i.label)}</div><div class="k-v">${esc(i.value)}</div>${i.sub?`<div class="k-s">${esc(i.sub)}</div>`:''}</div>`).join('')}</div>`;
+    if (s.head) return `${s.title?`<h2 class="rpt-sec">${esc(s.title)}</h2>`:''}${htmlTable(s.head, s.rows||[])}`;
+    if (s.note!=null) return `<div class="note">${s.noteHtml||esc(s.note)}</div>`;
+    return '';
+  }).join('');
+}
+function openPrintableReport(meta, sections){
   const w = window.open('', '_blank', 'width=1000,height=800');
-  if(!w){ alert('Please allow pop-ups for this site to generate the report.'); return; }
+  if(!w){ alert('Please allow pop-ups for this site to generate the printable report.'); return; }
   const statusPill = meta.status ? `<span class="rpt-badge" style="border-color:${meta.status.color};color:${meta.status.color}">${esc(meta.status.text)}</span>` : '';
   const metaRow = (meta.metaItems||[]).map(m=>`<span><b>${esc(m[0])}:</b> ${esc(m[1])}</span>`).join('');
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(meta.title)} — Ugomba Noel</title><style>${REPORT_CSS}</style></head><body><div class="sheet">
-    <div class="rpt-head"><div class="rpt-seal">⬡</div><div><div class="rpt-org">UGOMBA NOEL VEGETABLE OIL REFINERY</div><div class="rpt-org-sub">Operations Platform · Official Report</div></div>${statusPill}</div>
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(meta.title)} — ${esc(COMPANY)}</title><style>${REPORT_CSS}</style></head><body><div class="sheet">
+    <div class="rpt-head"><div class="rpt-seal">⬡</div><div><div class="rpt-org">${esc(COMPANY)}</div><div class="rpt-org-sub">${esc(COMPANY_SUB)} · Official Report</div></div>${statusPill}</div>
     <div class="rpt-title">${esc(meta.title)}</div>
     <div class="rpt-meta">${metaRow}</div>
-    ${bodyHtml}
-    <div class="rpt-foot"><span>Ugomba Noel Vegetable Oil Refinery — Confidential. Generated by the Operations Platform.</span><span>${esc(nowStr())}</span></div>
+    ${sectionsToHtml(sections)}
+    <div class="rpt-foot"><span>${esc(COMPANY)} — Confidential. Generated by the Operations Platform.</span><span>${esc(nowStr())}</span></div>
   </div>
-  <script>window.onload=function(){setTimeout(function(){window.focus();window.print();},250);};<\/script>
+  <script>window.onload=function(){setTimeout(function(){window.focus();window.print();},300);};<\/script>
   </body></html>`;
   w.document.open(); w.document.write(html); w.document.close();
 }
-const reportMetaBase = (user) => [['Generated', nowStr()], ['Prepared by', user?`${user.name} (${user.position})`:'System']];
+
+/* ---- PDF (downloadable + printable) rendering via jsPDF + autotable ---- */
+// jsPDF core fonts use WinAnsi encoding and cannot render ₦, arrows, etc.
+// Map those to safe ASCII so PDFs are correct and legible.
+function pdfSafe(s){
+  return String(s==null?'':s)
+    .replace(/₦/g,'NGN ')
+    .replace(/→/g,'->').replace(/×/g,'x')
+    .replace(/≥/g,'>=').replace(/≤/g,'<=')
+    .replace(/[’‘]/g,"'").replace(/[“”]/g,'"')
+    .replace(/[—–]/g,'-')
+    .replace(/✓/g,'[OK]').replace(/[✗✕]/g,'[X]')
+    .replace(/[·•]/g,'-')
+    .replace(/[^\x00-\xFF]/g,'').trim();
+}
+function pdfCell(c){
+  if (c && typeof c==='object'){
+    if (c.status){ const k=RPT_KINDS[c.status]||RPT_KINDS.neutral; return { content:pdfSafe(c.text), styles:{ textColor:k.pdf, fontStyle:'bold', halign:'center' } }; }
+    if (c.num) return { content:pdfSafe(c.text), styles:{ halign:'right' } };
+  }
+  return { content: pdfSafe(c) };
+}
+function buildReportDoc(meta, sections){
+  const { jsPDF } = window.jspdf || {};
+  if (!jsPDF){ alert('PDF engine still loading — please try again in a moment.'); return null; }
+  const doc = new jsPDF({ unit:'pt', format:'a4' });
+  const W = doc.internal.pageSize.getWidth();
+  const M = 40;
+  const drawHeader = () => {
+    doc.setFillColor(200,129,26); doc.rect(0,0,W,6,'F');
+    doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.setTextColor(26,29,36);
+    doc.text(pdfSafe(COMPANY), M, 34);
+    doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(90,99,115);
+    doc.text(pdfSafe(COMPANY_SUB + ' - Official Report'), M, 47);
+    doc.setDrawColor(200,129,26); doc.setLineWidth(2); doc.line(M,54,W-M,54);
+  };
+  drawHeader();
+  let y = 74;
+  doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.setTextColor(17,17,17);
+  doc.text(pdfSafe(meta.title), M, y);
+  if (meta.status){
+    doc.setFontSize(9); doc.setTextColor(...(meta.statusPdf||[74,82,98]));
+    doc.text(pdfSafe(meta.status.text), W-M, y, { align:'right' });
+  }
+  y += 16;
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(90,99,115);
+  const metaText = (meta.metaItems||[]).map(m=>`${m[0]}: ${m[1]}`).join('    -    ');
+  const metaLines = doc.splitTextToSize(pdfSafe(metaText), W-2*M);
+  doc.text(metaLines, M, y); y += metaLines.length*11 + 8;
+
+  sections.forEach(s=>{
+    if (s.kpis){
+      doc.autoTable({
+        startY:y, margin:{left:M,right:M},
+        body: s.kpis.map(k=>[{content:pdfSafe(k.label), styles:{fontStyle:'bold', textColor:[58,47,24]}}, {content:pdfSafe(k.value + (k.sub?`  (${k.sub})`:'')), styles:{halign:'right'}}]),
+        theme:'grid', styles:{ fontSize:9.5, cellPadding:5, lineColor:[215,219,227], textColor:[26,29,36] },
+        columnStyles:{ 0:{cellWidth:(W-2*M)*0.55}, 1:{cellWidth:(W-2*M)*0.45} },
+        tableLineColor:[215,219,227],
+      });
+      y = doc.lastAutoTable.finalY + 12;
+    } else if (s.head){
+      if (s.title){ doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(17,17,17); doc.text(pdfSafe(s.title), M, y); y += 6; }
+      doc.autoTable({
+        startY:y, margin:{left:M,right:M},
+        head:[ s.head.map(h=>{ const o=typeof h==='object'; return { content:pdfSafe(o?h.label:h), styles:{ halign:(o&&h.num)?'right':'left' } }; }) ],
+        body:(s.rows||[]).map(r=>r.map(pdfCell)),
+        theme:'striped',
+        headStyles:{ fillColor:[240,237,230], textColor:[58,47,24], fontStyle:'bold', fontSize:8.5, lineColor:[215,219,227], lineWidth:0.5 },
+        styles:{ fontSize:8.7, cellPadding:4, textColor:[26,29,36], lineColor:[226,229,236], lineWidth:0.4 },
+        alternateRowStyles:{ fillColor:[250,251,252] },
+      });
+      y = doc.lastAutoTable.finalY + 14;
+    } else if (s.note!=null){
+      doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(90,99,115);
+      const noteLines = doc.splitTextToSize(pdfSafe(s.note), W-2*M);
+      if (y + noteLines.length*11 > doc.internal.pageSize.getHeight()-60){ doc.addPage(); drawHeader(); y=74; }
+      doc.setFillColor(247,248,250); doc.setDrawColor(226,229,236);
+      doc.roundedRect(M, y-4, W-2*M, noteLines.length*11 + 12, 4, 4, 'FD');
+      doc.text(noteLines, M+8, y+8); y += noteLines.length*11 + 20;
+    }
+  });
+
+  // Footer on every page
+  const pages = doc.internal.getNumberOfPages();
+  for (let p=1;p<=pages;p++){
+    doc.setPage(p);
+    const H = doc.internal.pageSize.getHeight();
+    doc.setDrawColor(215,219,227); doc.setLineWidth(0.5); doc.line(M,H-32,W-M,H-32);
+    doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(122,130,144);
+    doc.text(pdfSafe(`${COMPANY} - Confidential. Generated ${nowStr()}.`), M, H-20);
+    doc.text(`Page ${p} of ${pages}`, W-M, H-20, { align:'right' });
+  }
+  return doc;
+}
+function downloadReportPdf(meta, sections, filename){
+  const doc = buildReportDoc(meta, sections);
+  if (doc) doc.save(filename || 'ugomba-report.pdf');
+}
+function ReportActions({ meta, sections, filename }){
+  return (
+    <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+      <button className="btn btn-blue" onClick={()=>downloadReportPdf(meta, sections, filename)}>⬇ Download PDF</button>
+      <button className="btn btn-ghost" onClick={()=>openPrintableReport(meta, sections)}>⎙ Print</button>
+    </div>
+  );
+}
 
 /* ── ROLE GUARD ── */
 function canAccessPage(user, perm) {
@@ -845,9 +1033,9 @@ function App() {
       <aside className="sidebar">
         <div className="sidebar-logo">
           <div className="sidebar-logo-hex">⬡</div>
-          <div className="sidebar-logo-title">Ugomba Noel</div>
+          <div className="sidebar-logo-title">Ugomba Noel Ltd</div>
           <div className="sidebar-logo-sub">Vegetable Oil Refinery</div>
-          <div className="sidebar-logo-version">v2.1.0 · Operations Platform</div>
+          <div className="sidebar-logo-version">v2.2.0 · PWA · Operations Platform</div>
         </div>
 
         {Object.entries(sections).map(([sec, items]) => (
@@ -942,7 +1130,7 @@ function LoginPage({ onLogin, error, users }) {
       <div className="login-card">
         <div className="login-header">
           <span className="login-hex">⬡</span>
-          <div className="login-title">Ugomba Noel</div>
+          <div className="login-title">Ugomba Noel Ltd</div>
           <div className="login-subtitle">Vegetable Oil Refinery — Operations Platform</div>
         </div>
 
@@ -1498,23 +1686,31 @@ const PACK_SIZES = [
 ];
 
 function PriceCalculator({ user }) {
+  const DAYS_PER_MONTH = 30;
   const [oilType, setOilType] = useState('Soybean');
-  const [monthlyVolume, setMonthlyVolume] = useState('30000');
-  // Fixed monthly overheads (₦ / month) — pre-filled from provided overhead sheet (editable)
+  const [batchSize, setBatchSize] = useState('30000');   // litres of finished oil per batch
+  const [batchDays, setBatchDays] = useState('3');        // a batch lasts ~2–3 days
+  // Fixed monthly labour & operations (₦ / month) — from the provided overhead sheet (editable)
   const [ovh, setOvh] = useState({
     manager:250000, marketing:200000, cleaner:40000, security:120000,
-    receptionist:90000, analyst:180000, transportation:150000, electricity:300000,
+    receptionist:90000, analyst:180000, transportation:150000,
   });
-  // Variable inputs
-  const [rawMaterial, setRawMaterial] = useState('3100'); // ₦/L raw oil
-  const [naohCost, setNaohCost]       = useState('20');   // ₦/L
+  // Power is generated from a diesel plant: ~₦300,000 of diesel every 3 days (editable)
+  const [dieselSpend, setDieselSpend] = useState('300000');
+  const [dieselDays, setDieselDays]   = useState('3');
+  // Variable inputs (per litre unless noted)
+  const [rawMaterial, setRawMaterial] = useState('3100');
+  const [naohCost, setNaohCost]       = useState('20');
+  const [acidType, setAcidType]       = useState('Phosphoric'); // Phosphoric | Citric | Both
+  const [phosCost, setPhosCost]       = useState('15');
+  const [citricCost, setCitricCost]   = useState('12');
   const [vitAbatchCost, setVitAbatchCost] = useState('52000'); // ₦ per 30,000 L
-  const [bottleCost, setBottleCost]   = useState('500');  // ₦/L packaging
+  const [bottleCost, setBottleCost]   = useState('500');
   const [profitPct, setProfitPct]     = useState('20');
-  // Cascading channel margins (%)
   const [distMargin, setDistMargin]   = useState('8');
   const [wholeMargin, setWholeMargin] = useState('12');
   const [retailMargin, setRetailMargin] = useState('25');
+  const [outputVol, setOutputVol]     = useState('');     // total finished output for a run (defaults to monthly)
 
   const [competitors] = useState(() => {
     const t = mostRecentTuesday(); const key = t.toISOString().slice(0,10);
@@ -1528,11 +1724,32 @@ function PriceCalculator({ user }) {
   const num = (v) => parseFloat(v) || 0;
   const setOv = (k,v) => setOvh(o=>({...o, [k]:num(v)}));
 
-  const fixedMonthly = Object.values(ovh).reduce((s,v)=>s+num(v),0);
-  const monthlyVol   = num(monthlyVolume);
-  const overheadPerL = monthlyVol>0 ? fixedMonthly/monthlyVol : 0;
-  const vitAperL     = num(vitAbatchCost)/30000;
-  const variablePerL = num(rawMaterial) + num(naohCost) + vitAperL + num(bottleCost);
+  // Production basis — labour/overheads are paid monthly but a batch lasts 2–3 days.
+  // International best practice (absorption / full-cost costing): spread fixed monthly
+  // cost across the units of finished product produced that month.
+  const batchesPerMonth = num(batchDays)>0 ? DAYS_PER_MONTH/num(batchDays) : 0;
+  const monthlyVol = num(batchSize) * batchesPerMonth;
+
+  // Electricity from diesel: cost/day derived from spend-per-cycle, then monthly.
+  const dieselPerDay  = num(dieselDays)>0 ? num(dieselSpend)/num(dieselDays) : 0;
+  const dieselMonthly = dieselPerDay * DAYS_PER_MONTH;
+
+  const salaryKeys = ['manager','marketing','cleaner','security','receptionist','analyst'];
+  const labourMonthly    = salaryKeys.reduce((s,k)=>s+num(ovh[k]),0);
+  const transportMonthly = num(ovh.transportation);
+  const fixedMonthly     = labourMonthly + transportMonthly + dieselMonthly;
+
+  const per = (monthly) => monthlyVol>0 ? monthly/monthlyVol : 0;
+  const labourPerL    = per(labourMonthly);
+  const transportPerL = per(transportMonthly);
+  const dieselPerL    = per(dieselMonthly);
+  const overheadPerL  = labourPerL + transportPerL + dieselPerL;
+
+  const acidPerL = acidType==='Phosphoric'?num(phosCost) : acidType==='Citric'?num(citricCost) : num(phosCost)+num(citricCost);
+  const acidLabel = acidType==='Both'?'Phosphoric + Citric Acid':acidType+' Acid';
+  const chemPerL = num(naohCost) + acidPerL;
+  const vitAperL = num(vitAbatchCost)/30000;
+  const variablePerL = num(rawMaterial) + chemPerL + vitAperL + num(bottleCost);
   const costPerL     = variablePerL + overheadPerL;
   const exFactoryPerL= costPerL * (1 + num(profitPct)/100);   // our price to distributor
   const profitPerL   = exFactoryPerL - costPerL;
@@ -1551,11 +1768,21 @@ function PriceCalculator({ user }) {
 
   const costItems = [
     ['Raw Material (Oil)', num(rawMaterial)],
-    ['NaOH / Refining Chemicals', num(naohCost)],
+    [`Refining Chemicals (NaOH + ${acidLabel})`, chemPerL],
     ['Vitamin A Fortification', vitAperL],
     ['Bottle / Packaging', num(bottleCost)],
-    ['Overhead (amortised)', overheadPerL],
+    ['Labour (amortised)', labourPerL],
+    ['Transportation (amortised)', transportPerL],
+    ['Power / Diesel (amortised)', dieselPerL],
   ];
+
+  // Expected profit for a production run based on total finished output volume.
+  const outVol = num(outputVol) || monthlyVol;
+  const totalCost      = costPerL*outVol;
+  const totalExFactory = exFactoryPerL*outVol;
+  const totalProfit    = profitPerL*outVol;
+  const totalRRP       = consumerPerL*outVol;
+  const rrpProfit      = (consumerPerL-costPerL)*outVol;
 
   const compAvg = competitors.prices.reduce((s,c)=>s+c.price,0) / (competitors.prices.length||1);
   const vsAvg = compAvg>0 ? ((consumerPerL - compAvg)/compAvg)*100 : 0;
@@ -1563,44 +1790,43 @@ function PriceCalculator({ user }) {
   const ovhLabels = {
     manager:'Manager', marketing:'Marketing Manager', cleaner:'Cleaner', security:'Security Guards',
     receptionist:'Receptionist / Asst. Floor Mgr', analyst:'Food Processing Analyst',
-    transportation:'Transportation', electricity:'Electricity',
+    transportation:'Transportation',
   };
 
-  const printReport = () => {
-    const kpis = rptKpis([
+  const reportMeta = {
+    title:'Price Setting & Channel Pricing Report',
+    metaItems:[['Company',COMPANY],['Product',`${oilType} Oil`],['Monthly Output',fmtN(monthlyVol)+' L'],['Profit Target',profitPct+'%'],...reportMetaBase(user)],
+  };
+  const reportSections = [
+    { kpis:[
       { label:'Production Cost / L', value:'₦'+fmt(costPerL,2), sub:`${oilType} oil` },
       { label:'Ex-Factory Price / L', value:'₦'+fmt(exFactoryPerL,2), sub:`incl. ${profitPct}% profit` },
       { label:'Profit / L', value:'₦'+fmt(profitPerL,2) },
-      { label:'Recommended Consumer / L', value:'₦'+fmt(consumerPerL,2), sub: (vsAvg>=0?'+':'')+vsAvg.toFixed(1)+'% vs market' },
-    ]);
-    const costTbl = rptTable(
-      ['Cost Component',{label:'₦ / Litre',num:true},{label:'Share',num:true}],
-      [...costItems.map(([l,v])=>[l,{num:true,text:fmt(v,2)},{num:true,text:(costPerL?((v/costPerL)*100).toFixed(1):'0.0')+'%'}]),
-       [{html:'<b>Total Cost / Litre</b>'},{num:true,html:'<b>'+fmt(costPerL,2)+'</b>'},{num:true,html:'<b>100.0%</b>'}]]
-    );
-    const matrix = rptTable(
-      ['Pack Size', ...channels.map(c=>({label:c.key+' (₦)',num:true}))],
-      PACK_SIZES.map(p=>[p.label, ...channels.map(c=>({num:true,text:fmtN(c.perL*p.litres)}))])
-    );
-    const compTbl = rptTable(
-      ['Competitor Brand','Grade',{label:'Price / L (₦)',num:true},{label:'Vs. Our RRP',num:true}],
-      competitors.prices.map(c=>{
-        const diff = c.price - consumerPerL;
-        return [c.name, c.grade, {num:true,text:fmtN(c.price)}, {html:(diff>=0?rptStatus('+'+fmtN(diff),'ok'):rptStatus(fmtN(diff),'bad'))}];
-      }).concat([[{html:'<b>Ugomba Noel (recommended)</b>'},{html:oilType+' oil'},{num:true,html:'<b>'+fmtN(consumerPerL)+'</b>'},{html:rptStatus('OUR PRICE','info')}]])
-    );
-    openPrintableReport({
-      title:'Price Setting & Channel Pricing Report',
-      metaItems:[['Product',`${oilType} Oil`],['Monthly Volume',fmtN(monthlyVol)+' L'],['Profit Target',profitPct+'%'],...reportMetaBase(user)],
-    },
-      kpis +
-      `<h2 class="rpt-sec">Unit Cost Build-up (per litre)</h2>` + costTbl +
-      `<h2 class="rpt-sec">Recommended Selling Prices by Pack Size &amp; Channel</h2>` + matrix +
-      `<div class="note">Channel prices cascade from the ex-factory price using best-practice trade margins: Distributor ${distMargin}% → Wholesaler ${wholeMargin}% → Retailer ${retailMargin}%. Each tier's price is what that buyer should pay; the Consumer column is the Recommended Retail Price (RRP).</div>` +
-      `<h2 class="rpt-sec">Competitor Benchmark — auto-updated ${esc(longDate(competitors.tuesday))}</h2>` + compTbl +
-      `<div class="note">Competitor prices are indicative market data refreshed automatically every Tuesday. Next scheduled update: ${esc(longDate(nextTuesday()))}.</div>`
-    );
-  };
+      { label:'Recommended Consumer / L', value:'₦'+fmt(consumerPerL,2), sub:(vsAvg>=0?'+':'')+vsAvg.toFixed(1)+'% vs market' },
+    ]},
+    { title:'Unit Cost Build-up (per litre)',
+      head:['Cost Component',{label:'₦ / Litre',num:true},{label:'Share',num:true}],
+      rows:[...costItems.map(([l,v])=>[l,{num:true,text:fmt(v,2)},{num:true,text:(costPerL?((v/costPerL)*100).toFixed(1):'0.0')+'%'}]),
+        ['Total Cost / Litre',{num:true,text:fmt(costPerL,2)},{num:true,text:'100.0%'}]] },
+    { title:`Expected Profit — ${fmtN(outVol)} L finished output`,
+      head:['Basis',{label:'Total (₦)',num:true}],
+      rows:[
+        ['Total Production Cost',{num:true,text:fmtN(totalCost)}],
+        ['Ex-Factory Revenue (sold to distributors)',{num:true,text:fmtN(totalExFactory)}],
+        ['Expected Profit (at ex-factory)',{num:true,text:fmtN(totalProfit)}],
+        ['Revenue if sold at Consumer RRP',{num:true,text:fmtN(totalRRP)}],
+        ['Profit if sold at Consumer RRP',{num:true,text:fmtN(rrpProfit)}],
+      ] },
+    { title:'Recommended Selling Prices by Pack Size & Channel',
+      head:['Pack Size', ...channels.map(c=>({label:c.key+' (₦)',num:true}))],
+      rows: PACK_SIZES.map(p=>[p.label, ...channels.map(c=>({num:true,text:fmtN(c.perL*p.litres)}))]) },
+    { note:`Channel prices cascade from the ex-factory price using best-practice trade margins: Distributor ${distMargin}% -> Wholesaler ${wholeMargin}% -> Retailer ${retailMargin}%. Fixed monthly labour and overheads are absorbed across monthly output (${fmt(batchesPerMonth,1)} batches/month x ${fmtN(num(batchSize))} L). Power is derived from diesel spend of ${fmtN(num(dieselSpend))} every ${num(dieselDays)} days.` },
+    { title:`Competitor Benchmark — auto-updated ${longDate(competitors.tuesday)}`,
+      head:['Competitor Brand','Grade',{label:'Price / L (₦)',num:true},{label:'Vs. Our RRP',num:true}],
+      rows: competitors.prices.map(c=>{const diff=c.price-consumerPerL; return [c.name,c.grade,{num:true,text:fmtN(c.price)}, diff>=0?{status:'ok',text:'+'+fmtN(diff)}:{status:'bad',text:fmtN(diff)}];})
+        .concat([['Ugomba Noel Ltd (recommended)', oilType+' oil', {num:true,text:fmtN(consumerPerL)}, {status:'info',text:'OUR PRICE'}]]) },
+    { note:`Competitor prices are indicative market data refreshed automatically every Tuesday. Next scheduled update: ${longDate(nextTuesday())}.` },
+  ];
 
   const OvField = ({k}) => (
     <div className="field"><label>{ovhLabels[k]} (₦/mo)</label>
@@ -1614,48 +1840,80 @@ function PriceCalculator({ user }) {
           <div className="page-heading">Price Setting Calculator</div>
           <div className="page-sub">Overhead-inclusive unit costing &amp; recommended channel pricing for {oilType.toLowerCase()} oil</div>
         </div>
-        <button className="btn btn-blue" onClick={printReport}>⎙ Print / Export PDF</button>
+        <ReportActions meta={reportMeta} sections={reportSections} filename={`Price-Setting-Report-${todayStr()}.pdf`}/>
       </div>
 
       <div className="alert alert-info mb-16">
         <span className="alert-icon">ℹ</span>
         <div>Prices cascade from the ex-factory price using international best-practice trade margins
-        (<strong>Distributor → Wholesaler → Retailer → Consumer</strong>). Fixed overheads are amortised across your monthly production volume. All inputs below are editable.</div>
+        (<strong>Distributor → Wholesaler → Retailer → Consumer</strong>). Monthly labour and overheads are <strong>absorbed per litre</strong> across the output you actually produce each month (a batch lasts ~2–3 days), and power is derived from your <strong>diesel</strong> spend. All inputs below are editable.</div>
       </div>
 
       <div className="grid-2">
         <div className="card">
-          <div className="section-title">Product &amp; Production</div>
-          <div className="form-grid cols-2 mb-12">
+          <div className="section-title">Production Basis</div>
+          <div className="form-grid cols-2 mb-8">
             <div className="field"><label>Oil Type</label>
               <select value={oilType} onChange={e=>{const t=e.target.value;setOilType(t);setRawMaterial(t==='Groundnut'?'3300':'3100');}}>
                 <option>Soybean</option><option>Groundnut</option>
               </select>
             </div>
-            <div className="field"><label>Monthly Production (L)</label><input type="number" value={monthlyVolume} onChange={e=>setMonthlyVolume(e.target.value)}/></div>
+            <div className="field"><label>Batch Size (L / batch)</label><input type="number" value={batchSize} onChange={e=>setBatchSize(e.target.value)}/></div>
+            <div className="field"><label>Batch Duration (days)</label><input type="number" step="0.5" value={batchDays} onChange={e=>setBatchDays(e.target.value)}/><span className="field-hint">A batch lasts ~2–3 days</span></div>
+            <div className="field"><label>&nbsp;</label>
+              <div className="inline-info" style={{padding:'6px 0'}}><span className="ii-label">Batches / month</span><span className="ii-value">{fmt(batchesPerMonth,1)}</span></div>
+            </div>
           </div>
-          <div className="section-title">Variable Costs (per litre unless noted)</div>
+          <div className="inline-info" style={{borderTop:'1px solid var(--border)',paddingTop:8}}>
+            <span className="ii-label">Monthly finished output</span>
+            <span className="ii-value" style={{color:'var(--accent)'}}>{fmtN(monthlyVol)} L</span>
+          </div>
+
+          <div className="section-title" style={{marginTop:16}}>Variable Costs (per litre unless noted)</div>
           <div className="form-grid cols-2">
             <div className="field"><label>Raw Material (₦/L)</label><input type="number" value={rawMaterial} onChange={e=>setRawMaterial(e.target.value)}/></div>
-            <div className="field"><label>NaOH / Chemicals (₦/L)</label><input type="number" value={naohCost} onChange={e=>setNaohCost(e.target.value)}/></div>
+            <div className="field"><label>NaOH (₦/L)</label><input type="number" value={naohCost} onChange={e=>setNaohCost(e.target.value)}/></div>
+            <div className="field"><label>Degumming Acid</label>
+              <select value={acidType} onChange={e=>setAcidType(e.target.value)}>
+                <option>Phosphoric</option><option>Citric</option><option>Both</option>
+              </select>
+              <span className="field-hint">We use phosphoric, citric, or both</span>
+            </div>
+            <div className="field"><label>&nbsp;</label>
+              <div className="inline-info" style={{padding:'6px 0'}}><span className="ii-label">Acid cost /L</span><span className="ii-value">₦{fmt(acidPerL,2)}</span></div>
+            </div>
+            {(acidType==='Phosphoric'||acidType==='Both') && <div className="field"><label>Phosphoric Acid (₦/L)</label><input type="number" value={phosCost} onChange={e=>setPhosCost(e.target.value)}/></div>}
+            {(acidType==='Citric'||acidType==='Both') && <div className="field"><label>Citric Acid (₦/L)</label><input type="number" value={citricCost} onChange={e=>setCitricCost(e.target.value)}/></div>}
             <div className="field"><label>Vitamin A (₦ / 30,000 L)</label><input type="number" value={vitAbatchCost} onChange={e=>setVitAbatchCost(e.target.value)}/></div>
             <div className="field"><label>Bottle / Packaging (₦/L)</label><input type="number" value={bottleCost} onChange={e=>setBottleCost(e.target.value)}/></div>
           </div>
         </div>
 
         <div className="card">
-          <div className="section-title">Fixed Monthly Overheads</div>
+          <div className="section-title">Fixed Monthly Labour &amp; Operations</div>
           <div className="form-grid cols-2">
             {Object.keys(ovhLabels).map(k=><OvField key={k} k={k}/>)}
           </div>
-          <div className="inline-info" style={{marginTop:10,borderTop:'1px solid var(--accent)',paddingTop:10}}>
-            <span className="ii-label">Total Fixed Overhead / month</span>
-            <span className="ii-value" style={{color:'var(--accent)'}}>{fmtCur(fixedMonthly)}</span>
+
+          <div className="section-title" style={{marginTop:16}}>Power — Diesel Generator</div>
+          <div className="form-grid cols-2">
+            <div className="field"><label>Diesel Spend (₦)</label><input type="number" value={dieselSpend} onChange={e=>setDieselSpend(e.target.value)}/></div>
+            <div className="field"><label>…every (days)</label><input type="number" step="0.5" value={dieselDays} onChange={e=>setDieselDays(e.target.value)}/><span className="field-hint">e.g. ₦300,000 every 3 days</span></div>
+          </div>
+          <div className="inline-info" style={{marginTop:6}}>
+            <span className="ii-label">Diesel / day</span><span className="ii-value">{fmtCur(dieselPerDay)}</span>
           </div>
           <div className="inline-info">
-            <span className="ii-label">Overhead per litre (÷ {fmtN(monthlyVol)} L)</span>
-            <span className="ii-value">₦{fmt(overheadPerL,2)}</span>
+            <span className="ii-label">Diesel / month (≈{DAYS_PER_MONTH} days)</span><span className="ii-value">{fmtCur(dieselMonthly)}</span>
           </div>
+
+          <div className="inline-info" style={{marginTop:8,borderTop:'1px solid var(--accent)',paddingTop:8}}>
+            <span className="ii-label">Total Fixed Cost / month</span>
+            <span className="ii-value" style={{color:'var(--accent)'}}>{fmtCur(fixedMonthly)}</span>
+          </div>
+          <div className="inline-info"><span className="ii-label">Labour / litre (absorbed)</span><span className="ii-value">₦{fmt(labourPerL,2)}</span></div>
+          <div className="inline-info"><span className="ii-label">Power (diesel) / litre</span><span className="ii-value">₦{fmt(dieselPerL,2)}</span></div>
+          <div className="inline-info"><span className="ii-label">Total overhead / litre</span><span className="ii-value">₦{fmt(overheadPerL,2)}</span></div>
         </div>
       </div>
 
@@ -1674,6 +1932,46 @@ function PriceCalculator({ user }) {
         <div className="metric-card accent"><div className="metric-label">Ex-Factory / L</div><div className="metric-value" style={{fontSize:20}}>₦{fmt(exFactoryPerL,2)}</div><div className="metric-sub">incl. {profitPct}% profit</div></div>
         <div className="metric-card green"><div className="metric-label">Profit / L</div><div className="metric-value" style={{fontSize:20}}>₦{fmt(profitPerL,2)}</div><div className="metric-sub">{costPerL>0?fmt((profitPerL/costPerL)*100,1):'0'}% markup</div></div>
         <div className="metric-card blue"><div className="metric-label">Recommended Consumer / L</div><div className="metric-value" style={{fontSize:20}}>₦{fmt(consumerPerL,2)}</div><div className="metric-sub">{vsAvg>=0?'+':''}{vsAvg.toFixed(1)}% vs market</div></div>
+      </div>
+
+      <div className="card">
+        <div className="flex-between mb-8">
+          <div className="section-title" style={{margin:0}}>Expected Profit — by Total Refined Output</div>
+        </div>
+        <div className="form-grid cols-2 mb-12" style={{maxWidth:520}}>
+          <div className="field"><label>Total Finished Output (L)</label><input type="number" value={outputVol} onChange={e=>setOutputVol(e.target.value)} placeholder={`default: ${fmtN(monthlyVol)} (monthly)`}/><span className="field-hint">Number/volume of final refined product for this run</span></div>
+          <div className="field"><label>&nbsp;</label>
+            <div className="inline-info" style={{padding:'6px 0'}}><span className="ii-label">Basis volume</span><span className="ii-value">{fmtN(outVol)} L</span></div>
+          </div>
+        </div>
+        <div className="metrics-row cols-4" style={{marginBottom:12}}>
+          <div className="metric-card"><div className="metric-label">Total Production Cost</div><div className="metric-value" style={{fontSize:18}}>{fmtCur(totalCost)}</div></div>
+          <div className="metric-card accent"><div className="metric-label">Ex-Factory Revenue</div><div className="metric-value" style={{fontSize:18}}>{fmtCur(totalExFactory)}</div><div className="metric-sub">sold to distributors</div></div>
+          <div className="metric-card green"><div className="metric-label">Expected Profit</div><div className="metric-value" style={{fontSize:18}}>{fmtCur(totalProfit)}</div><div className="metric-sub">at ex-factory</div></div>
+          <div className="metric-card blue"><div className="metric-label">Profit if sold at RRP</div><div className="metric-value" style={{fontSize:18}}>{fmtCur(rrpProfit)}</div><div className="metric-sub">consumer price</div></div>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Pack Size</th><th style={{textAlign:'right'}}>Units from Output</th><th style={{textAlign:'right'}}>Ex-Factory / Unit</th><th style={{textAlign:'right'}}>Profit / Unit</th><th style={{textAlign:'right'}}>Total Profit</th></tr></thead>
+            <tbody>
+              {PACK_SIZES.map(p=>{
+                const units = p.litres>0 ? Math.floor(outVol/p.litres) : 0;
+                const exUnit = exFactoryPerL*p.litres;
+                const profUnit = profitPerL*p.litres;
+                return (
+                  <tr key={p.label}>
+                    <td className="td-primary">{p.label}</td>
+                    <td className="td-mono" style={{textAlign:'right'}}>{fmtN(units)}</td>
+                    <td className="td-mono" style={{textAlign:'right'}}>{fmtCur(exUnit)}</td>
+                    <td className="td-mono" style={{textAlign:'right',color:'var(--green)'}}>{fmtCur(profUnit)}</td>
+                    <td className="td-mono" style={{textAlign:'right'}}>{fmtCur(profUnit*units)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div style={{fontSize:11,color:'var(--text3)',marginTop:8}}>Expected profit = (ex-factory price − unit cost) × output. "Units from Output" shows how many packs of each size the {fmtN(outVol)} L run yields.</div>
       </div>
 
       <div className="card">
@@ -1718,7 +2016,7 @@ function PriceCalculator({ user }) {
                 );
               })}
               <tr style={{borderTop:'2px solid var(--accent)'}}>
-                <td className="td-primary" style={{color:'var(--accent)'}}>Ugomba Noel (recommended)</td>
+                <td className="td-primary" style={{color:'var(--accent)'}}>Ugomba Noel Ltd (recommended)</td>
                 <td className="td-muted">{oilType} oil</td>
                 <td className="td-mono" style={{textAlign:'right',color:'var(--accent)'}}>{fmtCur(consumerPerL)}</td>
                 <td className="td-mono" style={{textAlign:'right',color:'var(--text3)'}}>—</td>
@@ -1743,7 +2041,9 @@ function CostDashboard({ inflationRate, marginAbove, batches, user }) {
   const [oilVol, setOilVol]     = useState('10000');
   const [oilCost, setOilCost]   = useState('650');
   const [naohCost, setNaohCost] = useState('1200');
-  const [acidCost, setAcidCost] = useState('3500');
+  const [acidType, setAcidType] = useState('Phosphoric'); // Phosphoric | Citric | Both
+  const [acidCost, setAcidCost] = useState('3500');       // phosphoric ₦/L
+  const [citricCost, setCitricCost] = useState('2200');   // citric ₦/kg
   const [vitACost, setVitACost] = useState('85000');
   const [laborCost, setLaborCost] = useState('80000');
   const [energyCost, setEnergyCost] = useState('45000');
@@ -1751,7 +2051,10 @@ function CostDashboard({ inflationRate, marginAbove, batches, user }) {
 
   const vol   = parseFloat(oilVol)||0;
   const raw   = vol * parseFloat(oilCost) / 1000;
-  const chem  = (vol/1000) * (parseFloat(naohCost)*7.5 + parseFloat(acidCost)*0.025 + parseFloat(vitACost)*0.0201);
+  const acidTerm = acidType==='Phosphoric' ? parseFloat(acidCost)*0.025
+                 : acidType==='Citric'     ? parseFloat(citricCost)*0.02
+                 : parseFloat(acidCost)*0.025 + parseFloat(citricCost)*0.02;
+  const chem  = (vol/1000) * (parseFloat(naohCost)*7.5 + acidTerm + parseFloat(vitACost)*0.0201);
   const labor = parseFloat(laborCost)||0;
   const energy= parseFloat(energyCost)||0;
   const pack  = parseFloat(packCost)||0;
@@ -1772,34 +2075,28 @@ function CostDashboard({ inflationRate, marginAbove, batches, user }) {
   ];
   const maxCost = Math.max(...items.map(i=>i[1]), 1);
 
-  const printReport = () => {
-    const kpis = rptKpis([
+  const reportMeta = {
+    title:'Production Cost Analysis Report',
+    metaItems:[['Company',COMPANY],['Batch Volume',fmtN(vol)+' L'],['Margin Basis',`Inflation ${inflationRate}% + ${marginAbove}%`],...reportMetaBase(user)],
+  };
+  const reportSections = [
+    { kpis:[
       { label:'Total Production Cost', value:fmtCur(total), sub:`${fmtN(vol)} L batch` },
       { label:'Ex-Factory Cost', value:'₦'+fmt(exFac,2), sub:'per litre' },
       { label:'Effective Margin', value:(inflationRate+marginAbove)+'%', sub:`Inflation ${inflationRate}% + Margin ${marginAbove}%` },
       { label:'Total Batch Profit', value:fmtCur(total_profit), sub:'₦'+fmt(profit_per_l,2)+' / L' },
-    ]);
-    const costTable = rptTable(
-      ['Cost Component',{label:'Amount (₦)',num:true},{label:'Share of Total',num:true}],
-      [...items.map(([l,v])=>[l,{num:true,text:fmtCur(v)},{num:true,text:(total?((v/total)*100).toFixed(1):'0.0')+'%'}]),
-       [{html:'<b>Total Production Cost</b>'},{num:true,html:'<b>'+fmtCur(total)+'</b>'},{num:true,html:'<b>100.0%</b>'}]]
-    );
-    const priceTable = rptTable(
-      ['Tier',{label:'Price / Litre (₦)',num:true},'Basis'],
-      [['Ex-Factory',{num:true,text:fmt(exFac,2)},'Production cost per litre'],
-       ['Wholesale',{num:true,text:fmt(wholesale,2)},`+${inflationRate+marginAbove}% margin over ex-factory`],
-       ['Retail',{num:true,text:fmt(retail,2)},'+15% retail mark-up over wholesale']]
-    );
-    openPrintableReport({
-      title:'Production Cost Analysis Report',
-      metaItems:[['Batch Volume',fmtN(vol)+' L'],['Margin Basis',`Inflation ${inflationRate}% + ${marginAbove}%`],...reportMetaBase(user)],
-    },
-      kpis +
-      `<h2 class="rpt-sec">Cost Breakdown (per batch)</h2>` + costTable +
-      `<h2 class="rpt-sec">Pricing Chain (per litre)</h2>` + priceTable +
-      `<div class="note">Wholesale price applies the CEO-set effective margin (inflation + margin) above the ex-factory cost. Retail adds a further 15% distribution mark-up. Figures are indicative and should be validated against current market conditions before quotation.</div>`
-    );
-  };
+    ]},
+    { title:'Cost Breakdown (per batch)',
+      head:['Cost Component',{label:'Amount (₦)',num:true},{label:'Share of Total',num:true}],
+      rows:[...items.map(([l,v])=>[l,{num:true,text:fmtCur(v)},{num:true,text:(total?((v/total)*100).toFixed(1):'0.0')+'%'}]),
+        ['Total Production Cost',{num:true,text:fmtCur(total)},{num:true,text:'100.0%'}]] },
+    { title:'Pricing Chain (per litre)',
+      head:['Tier',{label:'Price / Litre (₦)',num:true},'Basis'],
+      rows:[['Ex-Factory',{num:true,text:fmt(exFac,2)},'Production cost per litre'],
+        ['Wholesale',{num:true,text:fmt(wholesale,2)},`+${inflationRate+marginAbove}% margin over ex-factory`],
+        ['Retail',{num:true,text:fmt(retail,2)},'+15% retail mark-up over wholesale']] },
+    { note:'Wholesale price applies the CEO-set effective margin (inflation + margin) above the ex-factory cost. Retail adds a further 15% distribution mark-up. Figures are indicative and should be validated against current market conditions before quotation.' },
+  ];
 
   return (
     <div>
@@ -1808,7 +2105,7 @@ function CostDashboard({ inflationRate, marginAbove, batches, user }) {
           <div className="page-heading mb-4">Production Cost Analysis</div>
           <div className="page-sub">Ex-factory costing, wholesale &amp; retail pricing chain based on CEO-set inflation parameters</div>
         </div>
-        <button className="btn btn-blue" onClick={printReport}>⎙ Print / Export PDF</button>
+        <ReportActions meta={reportMeta} sections={reportSections} filename={`Cost-Analysis-Report-${todayStr()}.pdf`}/>
       </div>
 
       <div className="alert alert-info mb-16">
@@ -1823,7 +2120,13 @@ function CostDashboard({ inflationRate, marginAbove, batches, user }) {
             <div className="field"><label>Oil Volume (L)</label><input type="number" value={oilVol} onChange={e=>setOilVol(e.target.value)}/></div>
             <div className="field"><label>Oil Cost (₦/L)</label><input type="number" value={oilCost} onChange={e=>setOilCost(e.target.value)}/></div>
             <div className="field"><label>NaOH (₦/kg)</label><input type="number" value={naohCost} onChange={e=>setNaohCost(e.target.value)}/></div>
-            <div className="field"><label>Phosphoric Acid (₦/L)</label><input type="number" value={acidCost} onChange={e=>setAcidCost(e.target.value)}/></div>
+            <div className="field"><label>Degumming Acid</label>
+              <select value={acidType} onChange={e=>setAcidType(e.target.value)}>
+                <option>Phosphoric</option><option>Citric</option><option>Both</option>
+              </select>
+            </div>
+            {(acidType==='Phosphoric'||acidType==='Both') && <div className="field"><label>Phosphoric Acid (₦/L)</label><input type="number" value={acidCost} onChange={e=>setAcidCost(e.target.value)}/></div>}
+            {(acidType==='Citric'||acidType==='Both') && <div className="field"><label>Citric Acid (₦/kg)</label><input type="number" value={citricCost} onChange={e=>setCitricCost(e.target.value)}/></div>}
             <div className="field"><label>Vitamin A Conc. (₦/kg)</label><input type="number" value={vitACost} onChange={e=>setVitACost(e.target.value)}/></div>
             <div className="field"><label>Labour (₦ flat)</label><input type="number" value={laborCost} onChange={e=>setLaborCost(e.target.value)}/></div>
             <div className="field"><label>Energy (₦ flat)</label><input type="number" value={energyCost} onChange={e=>setEnergyCost(e.target.value)}/></div>
@@ -2139,7 +2442,7 @@ function InventoryPage({ inventory, setInventory, addAudit, showToast, user }) {
   const [adjQty, setAdjQty]   = useState('');
   const [adjNote, setAdjNote] = useState('');
   const [showAdd, setShowAdd] = useState(false);
-  const [newItem, setNewItem] = useState({ chemical:'', category:'Base Chemical', stock:'', unit:'kg', min_stock:'', cost_per_unit:'', supplier:'' });
+  const [newItem, setNewItem] = useState({ chemical:'', category:'Base Chemical', stock:'', unit:'kg', min_stock:'', cost_per_unit:'', supplier:'', expiry_date:'' });
   const [editItem, setEditItem] = useState(null);
   const [showArchived, setShowArchived] = useState(false);
   const isAdmin = user && (user.role==='superadmin' || user.role==='admin');
@@ -2159,7 +2462,7 @@ function InventoryPage({ inventory, setInventory, addAudit, showToast, user }) {
     setInventory(p=>[...p,item]);
     addAudit(`New chemical added to inventory: ${newItem.chemical} (${newItem.stock} ${newItem.unit})`,'success','inventory');
     showToast(`${newItem.chemical} added to inventory`);
-    setNewItem({chemical:'',category:'Base Chemical',stock:'',unit:'kg',min_stock:'',cost_per_unit:'',supplier:''});
+    setNewItem({chemical:'',category:'Base Chemical',stock:'',unit:'kg',min_stock:'',cost_per_unit:'',supplier:'',expiry_date:''});
     setShowAdd(false);
   };
 
@@ -2185,39 +2488,43 @@ function InventoryPage({ inventory, setInventory, addAudit, showToast, user }) {
   const archived = inventory.filter(i=>i.archived);
   const rows = showArchived ? archived : live;
   const lowStock = live.filter(i=>i.stock<=i.min_stock);
+  const expiitems = live.filter(i=>{ const k=expiryStatus(i.expiry_date).kind; return k==='bad'||k==='warn'; });
   const totalValue = live.reduce((s,i)=>s+(i.stock*i.cost_per_unit),0);
 
-  const printReport = () => {
-    const kpis = rptKpis([
+  const reportMeta = {
+    title:'Chemical Inventory Report',
+    status:{ text: (lowStock.length||expiitems.length)? `⚠ ${lowStock.length} LOW · ${expiitems.length} EXPIRY` : '✓ STOCK HEALTHY', color: (lowStock.length||expiitems.length)?'#9a6212':'#1a7f43' },
+    statusPdf: (lowStock.length||expiitems.length)?[154,98,18]:[26,127,67],
+    metaItems:[['Company',COMPANY],['Items',fmtN(live.length)],['Total Value',fmtCur(totalValue)],...reportMetaBase(user)],
+  };
+  const reportSections = [
+    { kpis:[
       { label:'Chemicals Tracked', value:fmtN(live.length) },
       { label:'Low Stock Alerts', value:fmtN(lowStock.length), sub:'At or below minimum' },
+      { label:'Expiry Alerts', value:fmtN(expiitems.length), sub:'Expired or ≤60 days' },
       { label:'Total Inventory Value', value:fmtCur(totalValue) },
-    ]);
-    const tbl = rptTable(
-      ['Chemical','Category','Supplier',{label:'Stock',num:true},'Unit',{label:'Min Level',num:true},{label:'Cost/Unit (₦)',num:true},{label:'Total Value (₦)',num:true},'Status'],
-      live.map(i=>[i.chemical,i.category,i.supplier||'—',{num:true,text:fmt(i.stock,1)},i.unit,{num:true,text:i.min_stock},{num:true,text:fmtN(i.cost_per_unit)},{num:true,text:fmtN(i.stock*i.cost_per_unit)},
-        {html: i.stock<=i.min_stock ? rptStatus('LOW STOCK','bad') : rptStatus('OK','ok')}])
-    );
-    openPrintableReport({
-      title:'Chemical Inventory Report',
-      status:{ text: lowStock.length? `⚠ ${lowStock.length} LOW STOCK` : '✓ STOCK HEALTHY', color: lowStock.length?'#9a6212':'#1a7f43' },
-      metaItems:[['Items',fmtN(live.length)],['Total Value',fmtCur(totalValue)],...reportMetaBase(user)],
-    },
-      kpis +
-      `<h2 class="rpt-sec">Chemical Stock Register</h2>` + tbl +
-      (lowStock.length?`<div class="note"><b>Reorder required:</b> ${esc(lowStock.map(i=>`${i.chemical} (${fmt(i.stock,1)} ${i.unit})`).join(' · '))}</div>`:'')
-    );
-  };
+    ]},
+    { title:'Chemical Stock Register',
+      head:['Chemical','Category','Supplier',{label:'Stock',num:true},'Unit',{label:'Min',num:true},{label:'Cost/Unit (₦)',num:true},{label:'Value (₦)',num:true},'Expiry','Status'],
+      rows: live.map(i=>{
+        const es = expiryStatus(i.expiry_date);
+        return [i.chemical,i.category,i.supplier||'—',{num:true,text:fmt(i.stock,1)},i.unit,{num:true,text:i.min_stock},{num:true,text:fmtN(i.cost_per_unit)},{num:true,text:fmtN(i.stock*i.cost_per_unit)},
+          i.expiry_date||'—',
+          i.stock<=i.min_stock ? {status:'bad',text:'LOW STOCK'} : es.kind==='bad'?{status:'bad',text:'EXPIRED'} : es.kind==='warn'?{status:'warn',text:'EXPIRING'} : {status:'ok',text:'OK'}];
+      }) },
+    ...(lowStock.length?[{ note:`Reorder required: ${lowStock.map(i=>`${i.chemical} (${fmt(i.stock,1)} ${i.unit})`).join(' · ')}` }]:[]),
+    ...(expiitems.length?[{ note:`Expiry attention: ${expiitems.map(i=>`${i.chemical} (${i.expiry_date})`).join(' · ')}` }]:[]),
+  ];
 
   return (
     <div>
       <div className="flex-between mb-16">
         <div>
           <div className="page-heading">Chemical Inventory</div>
-          <div className="page-sub">{live.length} chemicals tracked · {lowStock.length} low stock alert{lowStock.length!==1?'s':''}{archived.length>0?` · ${archived.length} archived`:''}</div>
+          <div className="page-sub">{live.length} chemicals tracked · {lowStock.length} low stock · {expiitems.length} expiry alert{expiitems.length!==1?'s':''}{archived.length>0?` · ${archived.length} archived`:''}</div>
         </div>
-        <div style={{display:'flex',gap:8}}>
-          <button className="btn btn-blue" onClick={printReport}>⎙ Print / Export PDF</button>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+          <ReportActions meta={reportMeta} sections={reportSections} filename={`Inventory-Report-${todayStr()}.pdf`}/>
           <button className="btn btn-primary" onClick={()=>setShowAdd(!showAdd)}>+ Add Chemical</button>
         </div>
       </div>
@@ -2232,6 +2539,13 @@ function InventoryPage({ inventory, setInventory, addAudit, showToast, user }) {
         <div className="alert alert-danger mb-16">
           <span className="alert-icon">▼</span>
           <div><strong>Low Stock:</strong> {lowStock.map(i=>`${i.chemical} (${fmt(i.stock,1)} ${i.unit})`).join(' · ')}</div>
+        </div>
+      )}
+
+      {expiitems.length > 0 && (
+        <div className="alert alert-warn mb-16">
+          <span className="alert-icon">⌛</span>
+          <div><strong>Expiry Watch:</strong> {expiitems.map(i=>{const es=expiryStatus(i.expiry_date);return `${i.chemical} — ${es.kind==='bad'?`EXPIRED ${-es.days}d ago`:`${es.days}d left`} (${i.expiry_date})`;}).join(' · ')}</div>
         </div>
       )}
 
@@ -2254,6 +2568,7 @@ function InventoryPage({ inventory, setInventory, addAudit, showToast, user }) {
             </div>
             <div className="field"><label>Min Stock Level</label><input type="number" value={newItem.min_stock} onChange={e=>setNewItem({...newItem,min_stock:e.target.value})}/></div>
             <div className="field"><label>Cost per Unit (₦)</label><input type="number" value={newItem.cost_per_unit} onChange={e=>setNewItem({...newItem,cost_per_unit:e.target.value})}/></div>
+            <div className="field"><label>Expiry Date</label><input type="date" value={newItem.expiry_date} onChange={e=>setNewItem({...newItem,expiry_date:e.target.value})}/></div>
           </div>
           <div style={{display:'flex',gap:8,marginTop:8}}>
             <button className="btn btn-success" onClick={addItem} disabled={!newItem.chemical||!newItem.stock}>Add to Inventory</button>
@@ -2283,6 +2598,7 @@ function InventoryPage({ inventory, setInventory, addAudit, showToast, user }) {
               </div>
               <div className="field"><label>Min Stock Level</label><input type="number" value={editItem.min_stock} onChange={e=>setEditItem({...editItem,min_stock:e.target.value})}/></div>
               <div className="field"><label>Cost per Unit (₦)</label><input type="number" value={editItem.cost_per_unit} onChange={e=>setEditItem({...editItem,cost_per_unit:e.target.value})}/></div>
+              <div className="field"><label>Expiry Date</label><input type="date" value={editItem.expiry_date||''} onChange={e=>setEditItem({...editItem,expiry_date:e.target.value})}/></div>
             </div>
             <div className="modal-actions">
               <button className="btn btn-ghost" onClick={()=>setEditItem(null)}>Cancel</button>
@@ -2302,9 +2618,9 @@ function InventoryPage({ inventory, setInventory, addAudit, showToast, user }) {
       <div className="card">
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Chemical</th><th>Category</th><th>Stock</th><th>Unit</th><th>Min Level</th><th>Cost/Unit</th><th>Total Value</th><th>Status</th><th>Action</th></tr></thead>
+            <thead><tr><th>Chemical</th><th>Category</th><th>Stock</th><th>Unit</th><th>Min Level</th><th>Cost/Unit</th><th>Total Value</th><th>Expiry</th><th>Status</th><th>Action</th></tr></thead>
             <tbody>
-              {rows.length===0 && <tr><td colSpan={9} className="empty-state">{showArchived?'No archived items':'No chemicals in inventory'}</td></tr>}
+              {rows.length===0 && <tr><td colSpan={10} className="empty-state">{showArchived?'No archived items':'No chemicals in inventory'}</td></tr>}
               {rows.map(i => (
                 <tr key={i.id}>
                   <td className="td-primary">{i.chemical}</td>
@@ -2324,6 +2640,12 @@ function InventoryPage({ inventory, setInventory, addAudit, showToast, user }) {
                   <td className="td-mono">{i.min_stock}</td>
                   <td className="td-mono">{fmtCur(i.cost_per_unit)}</td>
                   <td className="td-mono">{fmtCur(i.stock * i.cost_per_unit)}</td>
+                  <td>
+                    {(() => { const es=expiryStatus(i.expiry_date);
+                      const col = es.kind==='bad'?'var(--red)':es.kind==='warn'?'var(--accent)':es.kind==='ok'?'var(--text2)':'var(--text4)';
+                      return <span className="td-mono" style={{color:col,fontSize:12}} title={es.kind==='bad'?`Expired ${-es.days} days ago`:es.kind==='warn'?`${es.days} days left`:''}>{i.expiry_date||'—'}{es.kind==='bad'&&' ⚠'}{es.kind==='warn'&&' ⌛'}</span>;
+                    })()}
+                  </td>
                   <td><span className={`badge ${i.stock<=i.min_stock?'badge-low':'badge-ok'}`}>{i.stock<=i.min_stock?'LOW STOCK':'OK'}</span></td>
                   <td>
                     {editId===i.id ? (
@@ -2379,39 +2701,33 @@ function AnalyticsDashboard({ batches: allBatches, inventory: allInv, inflationR
     ((batches.length>0?70:0) * 0.4)
   );
 
-  const printReport = () => {
-    const kpis = rptKpis([
+  const reportMeta = {
+    title:'Operational Analytics Report',
+    metaItems:[['Company',COMPANY],['Batches Analysed',fmtN(batches.length)],['Health Score',healthScore+'/100'],...reportMetaBase(user)],
+  };
+  const reportSections = [
+    { kpis:[
       { label:'Total Oil Processed', value:fmtN(totalOil)+' L', sub:'Approved batches' },
       { label:'Batch Approval Rate', value:approvalRate+'%', sub:`${approved.length} of ${batches.length}` },
       { label:'Avg Oil / Batch', value:fmtN(Math.round(avgOilPerBatch))+' L', sub:'Per approved batch' },
       { label:'Ops Health Score', value:healthScore+' / 100', sub:'Composite' },
-    ]);
-    const dist = rptTable(
-      ['Process Type',{label:'Total Batches',num:true},{label:'Approved',num:true},{label:'Share',num:true}],
-      types.map(t=>[t.label,{num:true,text:byType(t.type).length},{num:true,text:approvedByType(t.type).length},{num:true,text:(batches.length?Math.round((byType(t.type).length/batches.length)*100):0)+'%'}])
-    );
-    const kpiTbl = rptTable(
-      ['Metric','Value','Benchmark','Status'],
-      [
-        ['Total Batches Submitted', batches.length, '≥10 per period', {html: batches.length>=10?rptStatus('OK','ok'):rptStatus('WATCH','warn')}],
-        ['Approved Batches', approved.length, '≥7 per period', {html: approved.length>=7?rptStatus('OK','ok'):rptStatus('WATCH','warn')}],
-        ['Approval Rate', approvalRate+'%', '≥80%', {html: approvalRate>=80?rptStatus('OK','ok'):rptStatus('BELOW','bad')}],
-        ['Vitamin A Compliance', approvedByType('VitaminA').length+'/'+byType('VitaminA').length, '100%', {html: byType('VitaminA').length>0&&approvedByType('VitaminA').length===byType('VitaminA').length?rptStatus('OK','ok'):rptStatus('WATCH','warn')}],
-        ['Total Oil Processed', fmtN(totalOil)+' L', '—', {html:rptStatus('INFO','info')}],
-        ['Low Stock Items', inventory.filter(i=>i.stock<=i.min_stock).length, '0', {html: inventory.filter(i=>i.stock<=i.min_stock).length===0?rptStatus('OK','ok'):rptStatus('ACTION','bad')}],
-        ['Effective Margin', (inflationRate+marginAbove)+'%', `>${inflationRate}%`, {html: marginAbove>0?rptStatus('OK','ok'):rptStatus('WATCH','warn')}],
-      ]
-    );
-    openPrintableReport({
-      title:'Operational Analytics Report',
-      metaItems:[['Batches Analysed',fmtN(batches.length)],['Health Score',healthScore+'/100'],...reportMetaBase(user)],
-    },
-      kpis +
-      `<h2 class="rpt-sec">Batch Type Distribution</h2>` + dist +
-      `<h2 class="rpt-sec">Detailed KPI Table</h2>` + kpiTbl +
-      `<div class="note">Health score is a composite of approval rate (30%), inventory health (30%) and production activity (40%). Benchmarks are internal operational targets.</div>`
-    );
-  };
+    ]},
+    { title:'Batch Type Distribution',
+      head:['Process Type',{label:'Total Batches',num:true},{label:'Approved',num:true},{label:'Share',num:true}],
+      rows: types.map(t=>[t.label,{num:true,text:byType(t.type).length},{num:true,text:approvedByType(t.type).length},{num:true,text:(batches.length?Math.round((byType(t.type).length/batches.length)*100):0)+'%'}]) },
+    { title:'Detailed KPI Table',
+      head:['Metric','Value','Benchmark','Status'],
+      rows:[
+        ['Total Batches Submitted', batches.length, '≥10 per period', batches.length>=10?{status:'ok',text:'OK'}:{status:'warn',text:'WATCH'}],
+        ['Approved Batches', approved.length, '≥7 per period', approved.length>=7?{status:'ok',text:'OK'}:{status:'warn',text:'WATCH'}],
+        ['Approval Rate', approvalRate+'%', '≥80%', approvalRate>=80?{status:'ok',text:'OK'}:{status:'bad',text:'BELOW'}],
+        ['Vitamin A Compliance', approvedByType('VitaminA').length+'/'+byType('VitaminA').length, '100%', byType('VitaminA').length>0&&approvedByType('VitaminA').length===byType('VitaminA').length?{status:'ok',text:'OK'}:{status:'warn',text:'WATCH'}],
+        ['Total Oil Processed', fmtN(totalOil)+' L', '—', {status:'info',text:'INFO'}],
+        ['Low Stock Items', inventory.filter(i=>i.stock<=i.min_stock).length, '0', inventory.filter(i=>i.stock<=i.min_stock).length===0?{status:'ok',text:'OK'}:{status:'bad',text:'ACTION'}],
+        ['Effective Margin', (inflationRate+marginAbove)+'%', `>${inflationRate}%`, marginAbove>0?{status:'ok',text:'OK'}:{status:'warn',text:'WATCH'}],
+      ] },
+    { note:'Health score is a composite of approval rate (30%), inventory health (30%) and production activity (40%). Benchmarks are internal operational targets.' },
+  ];
 
   return (
     <div>
@@ -2420,7 +2736,7 @@ function AnalyticsDashboard({ batches: allBatches, inventory: allInv, inflationR
           <div className="page-heading mb-4">Analytics Dashboard</div>
           <div className="page-sub">Operational KPIs and production intelligence</div>
         </div>
-        <button className="btn btn-blue" onClick={printReport}>⎙ Print / Export PDF</button>
+        <ReportActions meta={reportMeta} sections={reportSections} filename={`Analytics-Report-${todayStr()}.pdf`}/>
       </div>
 
       <div className="metrics-row">
@@ -2545,35 +2861,30 @@ function NAFDACReport({ batches, user }) {
   const allCompliant = vitAll.every(b => b.status==='approved'||(b.target_conc&&b.target_conc>=11));
   const reportDate = todayStr();
 
-  const printReport = () => {
-    const kpis = rptKpis([
+  const reportMeta = {
+    title:'NAFDAC Compliance Report',
+    status:{ text: allCompliant?'✓ COMPLIANT':'⚠ REVIEW REQUIRED', color: allCompliant?'#1a7f43':'#9a6212' },
+    statusPdf: allCompliant?[26,127,67]:[154,98,18],
+    metaItems:[['Company',COMPANY],['Registration','VEG-OIL/2024/NG'],['Standard','Edible Vegetable Oil Fortification'],['Period','2024'],...reportMetaBase(user)],
+  };
+  const reportSections = [
+    { kpis:[
       { label:'Approved Production Batches', value:fmtN(approved.length), sub:'Cleared for distribution' },
       { label:'Vitamin A Batches', value:`${vitApproved.length}/${vitAll.length}`, sub:'Approved / Total' },
       { label:'NAFDAC Minimum', value:'11 IU/g', sub:'Vitamin A (Retinol eq.)' },
-    ]);
-    const vitTable = rptTable(
-      ['Batch ID','Date',{label:'Oil Vol (L)',num:true},{label:'Target (IU/g)',num:true},{label:'Vit A Added (g)',num:true},'Operator','Approver','NAFDAC Status'],
-      vitAll.map(b=>{
+    ]},
+    { title:'Vitamin A Fortification Records',
+      head:['Batch ID','Date',{label:'Oil Vol (L)',num:true},{label:'Target (IU/g)',num:true},{label:'Vit A Added (g)',num:true},'Operator','Approver','NAFDAC Status'],
+      rows: vitAll.map(b=>{
         const compliant = b.status==='approved' && (b.target_conc||0)>=11;
-        const st = compliant ? rptStatus('COMPLIANT','ok') : b.status==='pending' ? rptStatus('PENDING','warn') : rptStatus('NON-COMPLIANT','bad');
-        return [b.id, b.date, {num:true,text:fmtN(b.oil_volume)}, {num:true,text:b.target_conc||'—'}, {num:true,text:b.vitA_g||'—'}, b.operator, b.approver||'Pending', {html:st}];
-      })
-    );
-    const apprTable = rptTable(
-      ['Batch ID','Process Type','Date',{label:'Oil Vol (L)',num:true},'Operator','Approver','Approved Date'],
-      approved.map(b=>[b.id,b.type,b.date,{num:true,text:fmtN(b.oil_volume)},b.operator,b.approver,b.approved_at||b.date])
-    );
-    openPrintableReport({
-      title:'NAFDAC Compliance Report',
-      status:{ text: allCompliant?'✓ COMPLIANT':'⚠ REVIEW REQUIRED', color: allCompliant?'#1a7f43':'#9a6212' },
-      metaItems:[['Registration','VEG-OIL/2024/NG'],['Standard','Edible Vegetable Oil Fortification'],['Period','2024'],...reportMetaBase(user)],
-    },
-      kpis +
-      `<h2 class="rpt-sec">Vitamin A Fortification Records</h2>` + vitTable +
-      `<h2 class="rpt-sec">All Approved Production Batches</h2>` + apprTable +
-      `<h2 class="rpt-sec">Declaration</h2><div class="note">This report is generated by the Ugomba Noel Vegetable Oil Refinery Operations Platform. All production data is recorded in real time and subject to internal quality-control procedures. Vitamin A fortification is conducted in compliance with NAFDAC regulations for edible vegetable oil fortification in Nigeria (minimum 11 IU/g Retinol equivalent). This document is valid for official submission to the National Agency for Food and Drug Administration and Control (NAFDAC).</div>`
-    );
-  };
+        const st = compliant ? {status:'ok',text:'COMPLIANT'} : b.status==='pending' ? {status:'warn',text:'PENDING'} : {status:'bad',text:'NON-COMPLIANT'};
+        return [b.id, b.date, {num:true,text:fmtN(b.oil_volume)}, {num:true,text:b.target_conc||'—'}, {num:true,text:b.vitA_g||'—'}, b.operator, b.approver||'Pending', st];
+      }) },
+    { title:'All Approved Production Batches',
+      head:['Batch ID','Process Type','Date',{label:'Oil Vol (L)',num:true},'Operator','Approver','Approved Date'],
+      rows: approved.map(b=>[b.id,b.type,b.date,{num:true,text:fmtN(b.oil_volume)},b.operator,b.approver,b.approved_at||b.date]) },
+    { note:`This report is generated by the ${COMPANY} Operations Platform. All production data is recorded in real time and subject to internal quality-control procedures. Vitamin A fortification is conducted in compliance with NAFDAC regulations for edible vegetable oil fortification in Nigeria (minimum 11 IU/g Retinol equivalent). This document is valid for official submission to the National Agency for Food and Drug Administration and Control (NAFDAC).` },
+  ];
 
   return (
     <div>
@@ -2582,7 +2893,7 @@ function NAFDACReport({ batches, user }) {
           <div className="page-heading">NAFDAC Compliance Report</div>
           <div className="page-sub">Generated: {reportDate} · Period: 2024</div>
         </div>
-        <button className="btn btn-blue" onClick={printReport}>⎙ Print / Export PDF</button>
+        <ReportActions meta={reportMeta} sections={reportSections} filename={`NAFDAC-Compliance-Report-${todayStr()}.pdf`}/>
       </div>
 
       <div className="nafdac-header">
@@ -2590,7 +2901,7 @@ function NAFDACReport({ batches, user }) {
         <div>
           <div className="nafdac-title">National Agency for Food & Drug Administration and Control</div>
           <div className="nafdac-ref">Registration: VEG-OIL/2024/NG · Standard: Edible Vegetable Oil Fortification</div>
-          <div style={{fontSize:12,color:'var(--text2)',marginTop:5}}>Ugomba Noel Vegetable Oil Refinery · Production Operations Report</div>
+          <div style={{fontSize:12,color:'var(--text2)',marginTop:5}}>{COMPANY} · Production Operations Report</div>
         </div>
         <div style={{marginLeft:'auto',textAlign:'right'}}>
           <span className={`badge ${allCompliant?'badge-approved':'badge-pending'}`} style={{fontSize:12,padding:'4px 12px'}}>
@@ -2673,7 +2984,7 @@ function NAFDACReport({ batches, user }) {
 
       <div className="card" style={{fontSize:12,color:'var(--text3)'}}>
         <div className="section-title">Declaration</div>
-        This report is generated by the Ugomba Noel Vegetable Oil Refinery Operations Platform. All production data is recorded in real-time and subject to internal quality control procedures. Vitamin A fortification is conducted in compliance with NAFDAC regulations for edible vegetable oil fortification in Nigeria (minimum 11 IU/g Retinol equivalent). This document is valid for official submission to the National Agency for Food and Drug Administration and Control (NAFDAC).
+        This report is generated by the {COMPANY} Operations Platform. All production data is recorded in real-time and subject to internal quality control procedures. Vitamin A fortification is conducted in compliance with NAFDAC regulations for edible vegetable oil fortification in Nigeria (minimum 11 IU/g Retinol equivalent). This document is valid for official submission to the National Agency for Food and Drug Administration and Control (NAFDAC).
       </div>
     </div>
   );
