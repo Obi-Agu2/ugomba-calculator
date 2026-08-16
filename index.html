@@ -632,6 +632,16 @@ function weeklyCompetitorPrices(tuesday){
     return { ...b, price: Math.round((b.base*(1+delta))/5)*5 };
   });
 }
+// Weekly Tuesday drift applied to the CURRENT prices so manual edits are kept as the new baseline.
+function driftCompetitorPrices(prices, tuesday){
+  const seed = Math.floor(tuesday.getTime()/DAY_MS);
+  return (prices||[]).map((c,idx)=>{
+    const r = Math.sin(seed*(idx+1)*12.9898)*43758.5453;
+    const frac = r - Math.floor(r);
+    const delta = (frac-0.5)*0.06;          // ±3% weekly movement from the current price
+    return { ...c, price: Math.round(((c.price||0)*(1+delta))/5)*5 };
+  });
+}
 
 const DEFAULT_PERMISSIONS = {
   full_access: {
@@ -1761,14 +1771,21 @@ function PriceCalculator({ user }) {
   const [outputVol, setOutputVol]     = useState('');     // total finished output for a run (defaults to monthly)
   const [customOvh, setCustomOvh]     = useState([]);     // extra monthly overhead lines [{id,label,amount}]
 
-  const [competitors] = useState(() => {
+  const [competitors, setCompetitors] = useState(() => {
     const t = mostRecentTuesday(); const key = t.toISOString().slice(0,10);
     const stored = LS.get('competitors', null);
-    if (stored && stored.tuesday === key && stored.v === 2) return stored;
-    const fresh = { v:2, tuesday:key, updatedAt: nowStr(), prices: weeklyCompetitorPrices(t) };
-    LS.set('competitors', fresh);
-    return fresh;
+    if (stored && stored.v === 3) {
+      if (stored.tuesday === key) return stored;                 // same week → keep (incl. manual edits)
+      return { ...stored, tuesday:key, updatedAt: nowStr(), prices: driftCompetitorPrices(stored.prices, t) };
+    }
+    return { v:3, tuesday:key, updatedAt: nowStr(), prices: weeklyCompetitorPrices(t), manual:false };
   });
+  useEffect(() => { LS.set('competitors', competitors); }, [competitors]);
+  const setCompetitorPrice = (idx, val) => setCompetitors(prev => ({ ...prev, manual:true, updatedAt: nowStr(),
+    prices: prev.prices.map((c,i)=> i===idx ? { ...c, price: parseFloat(val)||0 } : c) }));
+  const setCompetitorName = (idx, val) => setCompetitors(prev => ({ ...prev, manual:true,
+    prices: prev.prices.map((c,i)=> i===idx ? { ...c, name: val } : c) }));
+  const resetCompetitors = () => { const t = mostRecentTuesday(); setCompetitors({ v:3, tuesday:t.toISOString().slice(0,10), updatedAt: nowStr(), prices: weeklyCompetitorPrices(t), manual:false }); };
 
   const num = (v) => parseFloat(v) || 0;
   const setOv = (k,v) => setOvh(o=>({...o, [k]:v}));   // store raw string so the field clears/edits smoothly
@@ -2106,31 +2123,41 @@ function PriceCalculator({ user }) {
       <div className="card">
         <div className="flex-between mb-8">
           <div className="section-title" style={{margin:0}}>Competitor Comparison</div>
-          <span className="badge badge-info">⟳ Auto-updates every Tuesday</span>
+          <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+            <span className="badge badge-info">{competitors.manual ? '✎ Manually edited' : '⟳ Auto-updates every Tuesday'}</span>
+            <button className="btn btn-ghost btn-xs" onClick={resetCompetitors} title="Restore the weekly market estimate">↺ Reset to market</button>
+          </div>
         </div>
-        <div style={{fontSize:12,color:'var(--text3)',marginBottom:10}}>
-          Last updated: <strong style={{color:'var(--text2)'}}>{longDate(competitors.tuesday)}</strong> · Next update: <strong style={{color:'var(--text2)'}}>{longDate(nextTuesday())}</strong>
+        <div style={{fontSize:12,color:'var(--text3)',marginBottom:8}}>
+          Last updated: <strong style={{color:'var(--text2)'}}>{longDate(competitors.tuesday)}</strong> · Next auto-update: <strong style={{color:'var(--text2)'}}>{longDate(nextTuesday())}</strong>
         </div>
-        <div style={{fontSize:11,color:'var(--text3)',marginBottom:6}}>Consumer (retail) price for each pack size. Competitor pack prices are derived from each brand's per-litre price.</div>
+        <div style={{fontSize:11,color:'var(--text3)',marginBottom:6}}>Edit each competitor's <strong>price per litre</strong> (and brand name if needed) — the pack-size prices below update automatically.</div>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Brand</th>{PACK_SIZES.map(p=><th key={p.label} style={{textAlign:'right'}}>{p.label}</th>)}</tr></thead>
+            <thead><tr><th>Brand</th><th style={{textAlign:'right'}}>Price / L (edit)</th>{PACK_SIZES.map(p=><th key={p.label} style={{textAlign:'right'}}>{p.label}</th>)}</tr></thead>
             <tbody>
-              {competitors.prices.map(c=>(
-                <tr key={c.name}>
-                  <td className="td-primary">{c.name}<div style={{fontSize:10,color:'var(--text4)'}}>{c.grade}</div></td>
+              {competitors.prices.map((c,idx)=>(
+                <tr key={idx}>
+                  <td>
+                    <input value={c.name} onChange={e=>setCompetitorName(idx,e.target.value)} style={{width:'100%',minWidth:130,background:'var(--bg3)',border:'1px solid var(--border)',color:'var(--text)',padding:'6px 8px',borderRadius:6,fontSize:12,outline:'none'}}/>
+                    {c.grade && <div style={{fontSize:10,color:'var(--text4)',marginTop:2}}>{c.grade}</div>}
+                  </td>
+                  <td style={{textAlign:'right'}}>
+                    <input type="number" value={c.price} onChange={e=>setCompetitorPrice(idx,e.target.value)} style={{width:90,textAlign:'right',background:'var(--bg3)',border:'1px solid var(--border2)',color:'var(--text)',padding:'6px 8px',borderRadius:6,fontSize:12,outline:'none',fontFamily:'var(--mono)'}}/>
+                  </td>
                   {PACK_SIZES.map(p=><td key={p.label} className="td-mono" style={{textAlign:'right'}}>{fmtCur(c.price*p.litres)}</td>)}
                 </tr>
               ))}
               <tr style={{borderTop:'2px solid var(--accent)'}}>
                 <td className="td-primary" style={{color:'var(--accent)'}}>Ugomba Noel Ltd (our RRP)<div style={{fontSize:10,color:'var(--text4)'}}>{oilType} oil</div></td>
+                <td className="td-mono" style={{textAlign:'right',color:'var(--accent)'}}>{fmtCur(consumerPerL)}</td>
                 {PACK_SIZES.map(p=><td key={p.label} className="td-mono" style={{textAlign:'right',color:'var(--accent)'}}>{fmtCur(consumerPerL*p.litres)}</td>)}
               </tr>
             </tbody>
           </table>
         </div>
         <div style={{fontSize:11,color:'var(--text3)',marginTop:8}}>
-          Market average: <strong style={{color:'var(--text2)'}}>{fmtCur(compAvg)}</strong>/L. Our recommended RRP is {vsAvg>=0?'above':'below'} market by {Math.abs(vsAvg).toFixed(1)}%. Competitor figures are indicative and refreshed automatically each Tuesday.
+          Market average: <strong style={{color:'var(--text2)'}}>{fmtCur(compAvg)}</strong>/L. Our recommended RRP is {vsAvg>=0?'above':'below'} market by {Math.abs(vsAvg).toFixed(1)}%. {competitors.manual ? 'Prices were manually edited — they still drift slightly each Tuesday from your values; use “Reset to market” to restore the auto estimate.' : 'Competitor figures are indicative and refresh automatically each Tuesday.'}
           {vsAvg>25 && <span style={{color:'var(--accent)'}}> ⚠ Your required price is well above market — review raw-material sourcing, overheads or the profit/margin assumptions to stay competitive.</span>}
           {vsAvg<-15 && <span style={{color:'var(--green)'}}> ✓ You have room to raise price or offer trade discounts while remaining competitive.</span>}
         </div>
