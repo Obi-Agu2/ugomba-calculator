@@ -1724,19 +1724,28 @@ function PriceCalculator({ user }) {
   // Power is generated from a diesel plant: ~₦300,000 of diesel every 3 days (editable)
   const [dieselSpend, setDieselSpend] = useState('300000');
   const [dieselDays, setDieselDays]   = useState('3');
-  // Variable inputs (per litre unless noted)
-  const [rawMaterial, setRawMaterial] = useState('3100');
-  const [naohCost, setNaohCost]       = useState('20');
-  const [acidType, setAcidType]       = useState('Phosphoric'); // Phosphoric | Citric | Both
-  const [phosCost, setPhosCost]       = useState('15');
-  const [citricCost, setCitricCost]   = useState('12');
-  const [vitAbatchCost, setVitAbatchCost] = useState('52000'); // ₦ per 30,000 L
-  const [bottleCost, setBottleCost]   = useState('500');
+  // Raw material & packaging (bulk purchase → effective ₦ per finished litre)
+  const [rawMaterial, setRawMaterial] = useState('3100'); // ₦/L of finished oil
+  const [bottleCost, setBottleCost]   = useState('500');  // ₦/L packaging
+  // We buy chemicals in BULK and use only a small dose per litre. Cost/L is
+  // computed automatically as (bulk unit price) × (dose used per litre).
+  // NaOH is auto-derived from the batch neutralisation requirement (FFA-driven).
+  const [ffaPct, setFfaPct]                 = useState('1.5');   // % free fatty acid
+  const [naohPricePerKg, setNaohPricePerKg] = useState('1200');  // bulk ₦/kg
+  const [acidType, setAcidType]             = useState('Phosphoric'); // Phosphoric | Citric | Both
+  const [phosPricePerL, setPhosPricePerL]   = useState('3500');  // bulk ₦/L
+  const [phosDoseMlPerL, setPhosDoseMlPerL] = useState('0.3');   // mL used per L oil
+  const [citricPricePerKg, setCitricPricePerKg] = useState('2200'); // bulk ₦/kg
+  const [citricDoseGPerL, setCitricDoseGPerL]   = useState('0.2');  // g used per L oil
+  const [vitTargetIU, setVitTargetIU] = useState('11');           // IU/g (NAFDAC min)
+  const [vitStockIU, setVitStockIU]   = useState('500000');       // concentrate potency IU/g
+  const [vitPricePerKg, setVitPricePerKg] = useState('85000');    // bulk ₦/kg
   const [profitPct, setProfitPct]     = useState('20');
   const [distMargin, setDistMargin]   = useState('8');
   const [wholeMargin, setWholeMargin] = useState('12');
   const [retailMargin, setRetailMargin] = useState('25');
   const [outputVol, setOutputVol]     = useState('');     // total finished output for a run (defaults to monthly)
+  const [customOvh, setCustomOvh]     = useState([]);     // extra monthly overhead lines [{id,label,amount}]
 
   const [competitors] = useState(() => {
     const t = mostRecentTuesday(); const key = t.toISOString().slice(0,10);
@@ -1749,6 +1758,9 @@ function PriceCalculator({ user }) {
 
   const num = (v) => parseFloat(v) || 0;
   const setOv = (k,v) => setOvh(o=>({...o, [k]:num(v)}));
+  const addCustomOvh    = () => setCustomOvh(list=>[...list, {id:'co'+Date.now(), label:'', amount:''}]);
+  const updateCustomOvh = (id, patch) => setCustomOvh(list=>list.map(x=>x.id===id?{...x,...patch}:x));
+  const removeCustomOvh = (id) => setCustomOvh(list=>list.filter(x=>x.id!==id));
 
   // Production basis — labour/overheads are paid monthly but a batch lasts 2–3 days.
   // International best practice (absorption / full-cost costing): spread fixed monthly
@@ -1763,19 +1775,30 @@ function PriceCalculator({ user }) {
   const salaryKeys = ['manager','marketing','cleaner','security','receptionist','analyst'];
   const labourMonthly    = salaryKeys.reduce((s,k)=>s+num(ovh[k]),0);
   const transportMonthly = num(ovh.transportation);
-  const fixedMonthly     = labourMonthly + transportMonthly + dieselMonthly;
+  const customMonthly    = customOvh.reduce((s,x)=>s+num(x.amount),0);
+  const fixedMonthly     = labourMonthly + transportMonthly + dieselMonthly + customMonthly;
 
   const per = (monthly) => monthlyVol>0 ? monthly/monthlyVol : 0;
   const labourPerL    = per(labourMonthly);
   const transportPerL = per(transportMonthly);
   const dieselPerL    = per(dieselMonthly);
-  const overheadPerL  = labourPerL + transportPerL + dieselPerL;
+  const customPerL    = per(customMonthly);
+  const overheadPerL  = labourPerL + transportPerL + dieselPerL + customPerL;
 
-  const acidPerL = acidType==='Phosphoric'?num(phosCost) : acidType==='Citric'?num(citricCost) : num(phosCost)+num(citricCost);
-  const acidLabel = acidType==='Both'?'Phosphoric + Citric Acid':acidType+' Acid';
-  const chemPerL = num(naohCost) + acidPerL;
-  const vitAperL = num(vitAbatchCost)/30000;
-  const variablePerL = num(rawMaterial) + chemPerL + vitAperL + num(bottleCost);
+  // Chemicals: bulk unit price × small dose per litre (only a little is used).
+  const oilFactor = { Soybean:0.98, Groundnut:1.02 }[oilType] || 1;
+  const naohKgPerL  = num(ffaPct) * 0.142 * oilFactor * 1.15 / 1000;   // kg NaOH / L (incl. 15% excess)
+  const naohKgPerBatch = naohKgPerL * num(batchSize);
+  const naohCostPerL = naohKgPerL * num(naohPricePerKg);              // auto-calculated
+  const usePhos   = acidType==='Phosphoric' || acidType==='Both';
+  const useCitric = acidType==='Citric'     || acidType==='Both';
+  const phosCostPerL   = usePhos   ? num(phosDoseMlPerL) * (num(phosPricePerL)/1000) : 0;   // mL/L × ₦/mL
+  const citricCostPerL = useCitric ? (num(citricDoseGPerL)/1000) * num(citricPricePerKg) : 0; // kg/L × ₦/kg
+  const acidCostPerL   = phosCostPerL + citricCostPerL;
+  const vitDoseGPerL   = num(vitStockIU)>0 ? (0.92*1000*num(vitTargetIU)/num(vitStockIU))*1.10 : 0; // g/L incl. 10% excess
+  const vitCostPerL    = vitDoseGPerL * (num(vitPricePerKg)/1000);    // g/L × ₦/g
+  const chemPerL     = naohCostPerL + acidCostPerL + vitCostPerL;
+  const variablePerL = num(rawMaterial) + chemPerL + num(bottleCost);
   const costPerL     = variablePerL + overheadPerL;
   const exFactoryPerL= costPerL * (1 + num(profitPct)/100);   // our price to distributor
   const profitPerL   = exFactoryPerL - costPerL;
@@ -1794,12 +1817,15 @@ function PriceCalculator({ user }) {
 
   const costItems = [
     ['Raw Material (Oil)', num(rawMaterial)],
-    [`Refining Chemicals (NaOH + ${acidLabel})`, chemPerL],
-    ['Vitamin A Fortification', vitAperL],
+    ['NaOH (neutralisation, auto)', naohCostPerL],
+    ...(usePhos   ? [['Phosphoric Acid (degumming)', phosCostPerL]] : []),
+    ...(useCitric ? [['Citric Acid (degumming)', citricCostPerL]] : []),
+    ['Vitamin A Fortification', vitCostPerL],
     ['Bottle / Packaging', num(bottleCost)],
     ['Labour (amortised)', labourPerL],
     ['Transportation (amortised)', transportPerL],
     ['Power / Diesel (amortised)', dieselPerL],
+    ...(customMonthly>0 ? [['Other Overhead (amortised)', customPerL]] : []),
   ];
 
   // Expected profit for a production run based on total finished output volume.
@@ -1847,11 +1873,11 @@ function PriceCalculator({ user }) {
       head:['Pack Size', ...channels.map(c=>({label:c.key+' (₦)',num:true}))],
       rows: PACK_SIZES.map(p=>[p.label, ...channels.map(c=>({num:true,text:fmtN(c.perL*p.litres)}))]) },
     { note:`Channel prices cascade from the ex-factory price using best-practice trade margins: Distributor ${distMargin}% -> Wholesaler ${wholeMargin}% -> Retailer ${retailMargin}%. Fixed monthly labour and overheads are absorbed across monthly output (${fmt(batchesPerMonth,1)} batches/month x ${fmtN(num(batchSize))} L). Power is derived from diesel spend of ${fmtN(num(dieselSpend))} every ${num(dieselDays)} days.` },
-    { title:`Competitor Benchmark — auto-updated ${longDate(competitors.tuesday)}`,
-      head:['Competitor Brand','Grade',{label:'Price / L (₦)',num:true},{label:'Vs. Our RRP',num:true}],
-      rows: competitors.prices.map(c=>{const diff=c.price-consumerPerL; return [c.name,c.grade,{num:true,text:fmtN(c.price)}, diff>=0?{status:'ok',text:'+'+fmtN(diff)}:{status:'bad',text:fmtN(diff)}];})
-        .concat([['Ugomba Noel Ltd (recommended)', oilType+' oil', {num:true,text:fmtN(consumerPerL)}, {status:'info',text:'OUR PRICE'}]]) },
-    { note:`Competitor prices are indicative market data refreshed automatically every Tuesday. Next scheduled update: ${longDate(nextTuesday())}.` },
+    { title:`Competitor Benchmark — consumer price by pack (auto-updated ${longDate(competitors.tuesday)})`,
+      head:['Brand', ...PACK_SIZES.map(p=>({label:p.label+' (₦)',num:true}))],
+      rows: competitors.prices.map(c=>[c.name, ...PACK_SIZES.map(p=>({num:true,text:fmtN(c.price*p.litres)}))])
+        .concat([['Ugomba Noel Ltd (our RRP)', ...PACK_SIZES.map(p=>({num:true,text:fmtN(consumerPerL*p.litres)}))]]) },
+    { note:`Competitor pack prices are derived from each brand's per-litre price and are indicative market data refreshed automatically every Tuesday. Next scheduled update: ${longDate(nextTuesday())}.` },
   ];
 
   const OvField = ({k}) => (
@@ -1895,23 +1921,47 @@ function PriceCalculator({ user }) {
             <span className="ii-value" style={{color:'var(--accent)'}}>{fmtN(monthlyVol)} L</span>
           </div>
 
-          <div className="section-title" style={{marginTop:16}}>Variable Costs (per litre unless noted)</div>
+          <div className="section-title" style={{marginTop:16}}>Raw Material &amp; Packaging (₦ per finished litre)</div>
           <div className="form-grid cols-2">
-            <div className="field"><label>Raw Material (₦/L)</label><input type="number" value={rawMaterial} onChange={e=>setRawMaterial(e.target.value)}/></div>
-            <div className="field"><label>NaOH (₦/L)</label><input type="number" value={naohCost} onChange={e=>setNaohCost(e.target.value)}/></div>
+            <div className="field"><label>Raw Material — Oil (₦/L)</label><input type="number" value={rawMaterial} onChange={e=>setRawMaterial(e.target.value)}/></div>
+            <div className="field"><label>Bottle / Packaging (₦/L)</label><input type="number" value={bottleCost} onChange={e=>setBottleCost(e.target.value)}/></div>
+          </div>
+
+          <div className="section-title" style={{marginTop:16}}>Chemicals — bought in bulk, dosed per litre</div>
+          <div style={{fontSize:11,color:'var(--text3)',marginBottom:8}}>Enter the <strong>bulk unit price</strong> and the small <strong>dose used per litre</strong>; the cost per litre is auto-calculated. NaOH is derived automatically from the batch neutralisation requirement.</div>
+          <div className="form-grid cols-2">
+            <div className="field"><label>FFA of crude oil (%)</label><input type="number" step="0.1" value={ffaPct} onChange={e=>setFfaPct(e.target.value)}/><span className="field-hint">Drives the NaOH dose</span></div>
+            <div className="field"><label>NaOH bulk price (₦/kg)</label><input type="number" value={naohPricePerKg} onChange={e=>setNaohPricePerKg(e.target.value)}/></div>
+          </div>
+          <div className="inline-info"><span className="ii-label">NaOH required / batch ({fmtN(num(batchSize))} L)</span><span className="ii-value">{fmt(naohKgPerBatch,2)} kg</span></div>
+          <div className="inline-info"><span className="ii-label">NaOH cost / litre (auto)</span><span className="ii-value" style={{color:'var(--accent)'}}>₦{fmt(naohCostPerL,3)}</span></div>
+
+          <div className="form-grid cols-2" style={{marginTop:10}}>
             <div className="field"><label>Degumming Acid</label>
               <select value={acidType} onChange={e=>setAcidType(e.target.value)}>
                 <option>Phosphoric</option><option>Citric</option><option>Both</option>
               </select>
-              <span className="field-hint">We use phosphoric, citric, or both</span>
+              <span className="field-hint">Phosphoric, citric, or both</span>
             </div>
             <div className="field"><label>&nbsp;</label>
-              <div className="inline-info" style={{padding:'6px 0'}}><span className="ii-label">Acid cost /L</span><span className="ii-value">₦{fmt(acidPerL,2)}</span></div>
+              <div className="inline-info" style={{padding:'6px 0'}}><span className="ii-label">Acid cost / L</span><span className="ii-value">₦{fmt(acidCostPerL,3)}</span></div>
             </div>
-            {(acidType==='Phosphoric'||acidType==='Both') && <div className="field"><label>Phosphoric Acid (₦/L)</label><input type="number" value={phosCost} onChange={e=>setPhosCost(e.target.value)}/></div>}
-            {(acidType==='Citric'||acidType==='Both') && <div className="field"><label>Citric Acid (₦/L)</label><input type="number" value={citricCost} onChange={e=>setCitricCost(e.target.value)}/></div>}
-            <div className="field"><label>Vitamin A (₦ / 30,000 L)</label><input type="number" value={vitAbatchCost} onChange={e=>setVitAbatchCost(e.target.value)}/></div>
-            <div className="field"><label>Bottle / Packaging (₦/L)</label><input type="number" value={bottleCost} onChange={e=>setBottleCost(e.target.value)}/></div>
+            {usePhos && <div className="field"><label>Phosphoric dose (mL/L)</label><input type="number" step="0.05" value={phosDoseMlPerL} onChange={e=>setPhosDoseMlPerL(e.target.value)}/></div>}
+            {usePhos && <div className="field"><label>Phosphoric bulk (₦/L)</label><input type="number" value={phosPricePerL} onChange={e=>setPhosPricePerL(e.target.value)}/></div>}
+            {useCitric && <div className="field"><label>Citric dose (g/L)</label><input type="number" step="0.05" value={citricDoseGPerL} onChange={e=>setCitricDoseGPerL(e.target.value)}/></div>}
+            {useCitric && <div className="field"><label>Citric bulk (₦/kg)</label><input type="number" value={citricPricePerKg} onChange={e=>setCitricPricePerKg(e.target.value)}/></div>}
+          </div>
+
+          <div className="form-grid cols-2" style={{marginTop:10}}>
+            <div className="field"><label>Vitamin A target (IU/g)</label><input type="number" step="0.5" value={vitTargetIU} onChange={e=>setVitTargetIU(e.target.value)}/></div>
+            <div className="field"><label>Vit A concentrate (IU/g)</label><input type="number" value={vitStockIU} onChange={e=>setVitStockIU(e.target.value)}/></div>
+            <div className="field"><label>Vit A bulk price (₦/kg)</label><input type="number" value={vitPricePerKg} onChange={e=>setVitPricePerKg(e.target.value)}/></div>
+            <div className="field"><label>&nbsp;</label>
+              <div className="inline-info" style={{padding:'6px 0'}}><span className="ii-label">Vit A {fmt(vitDoseGPerL,4)} g/L</span><span className="ii-value">₦{fmt(vitCostPerL,3)}</span></div>
+            </div>
+          </div>
+          <div className="inline-info" style={{borderTop:'1px solid var(--accent)',paddingTop:8,marginTop:6}}>
+            <span className="ii-label">Total chemicals / litre</span><span className="ii-value" style={{color:'var(--accent)'}}>₦{fmt(chemPerL,3)}</span>
           </div>
         </div>
 
@@ -1920,6 +1970,17 @@ function PriceCalculator({ user }) {
           <div className="form-grid cols-2">
             {Object.keys(ovhLabels).map(k=><OvField key={k} k={k}/>)}
           </div>
+          <div style={{display:'flex',flexDirection:'column',gap:6,marginTop:8}}>
+            {customOvh.map(c=>(
+              <div key={c.id} style={{display:'flex',gap:6,alignItems:'center'}}>
+                <input style={{flex:2,background:'var(--bg3)',border:'1px solid var(--border)',color:'var(--text)',padding:'8px 10px',borderRadius:6,fontSize:13,outline:'none'}} placeholder="Overhead name (e.g. Rent, Insurance, Water)" value={c.label} onChange={e=>updateCustomOvh(c.id,{label:e.target.value})}/>
+                <input type="number" style={{flex:1,minWidth:90,background:'var(--bg3)',border:'1px solid var(--border)',color:'var(--text)',padding:'8px 10px',borderRadius:6,fontSize:13,outline:'none'}} placeholder="₦/mo" value={c.amount} onChange={e=>updateCustomOvh(c.id,{amount:e.target.value})}/>
+                <button className="btn btn-danger btn-xs" onClick={()=>removeCustomOvh(c.id)} title="Remove line">✕</button>
+              </div>
+            ))}
+          </div>
+          <button className="btn btn-ghost btn-sm" style={{marginTop:8}} onClick={addCustomOvh}>+ Add Overhead Line</button>
+          {customMonthly>0 && <div className="inline-info" style={{marginTop:6}}><span className="ii-label">Custom overhead / month</span><span className="ii-value">{fmtCur(customMonthly)}</span></div>}
 
           <div className="section-title" style={{marginTop:16}}>Power — Diesel Generator</div>
           <div className="form-grid cols-2">
@@ -2026,26 +2087,20 @@ function PriceCalculator({ user }) {
         <div style={{fontSize:12,color:'var(--text3)',marginBottom:10}}>
           Last updated: <strong style={{color:'var(--text2)'}}>{longDate(competitors.tuesday)}</strong> · Next update: <strong style={{color:'var(--text2)'}}>{longDate(nextTuesday())}</strong>
         </div>
+        <div style={{fontSize:11,color:'var(--text3)',marginBottom:6}}>Consumer (retail) price for each pack size. Competitor pack prices are derived from each brand's per-litre price.</div>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Brand</th><th>Grade</th><th style={{textAlign:'right'}}>Price / L</th><th style={{textAlign:'right'}}>Vs. Our RRP</th></tr></thead>
+            <thead><tr><th>Brand</th>{PACK_SIZES.map(p=><th key={p.label} style={{textAlign:'right'}}>{p.label}</th>)}</tr></thead>
             <tbody>
-              {competitors.prices.map(c=>{
-                const diff = c.price - consumerPerL;
-                return (
-                  <tr key={c.name}>
-                    <td className="td-primary">{c.name}</td>
-                    <td className="td-muted">{c.grade}</td>
-                    <td className="td-mono" style={{textAlign:'right'}}>{fmtCur(c.price)}</td>
-                    <td className="td-mono" style={{textAlign:'right',color:diff>=0?'var(--green)':'var(--red)'}}>{diff>=0?'+':''}{fmtCur(diff)}</td>
-                  </tr>
-                );
-              })}
+              {competitors.prices.map(c=>(
+                <tr key={c.name}>
+                  <td className="td-primary">{c.name}<div style={{fontSize:10,color:'var(--text4)'}}>{c.grade}</div></td>
+                  {PACK_SIZES.map(p=><td key={p.label} className="td-mono" style={{textAlign:'right'}}>{fmtCur(c.price*p.litres)}</td>)}
+                </tr>
+              ))}
               <tr style={{borderTop:'2px solid var(--accent)'}}>
-                <td className="td-primary" style={{color:'var(--accent)'}}>Ugomba Noel Ltd (recommended)</td>
-                <td className="td-muted">{oilType} oil</td>
-                <td className="td-mono" style={{textAlign:'right',color:'var(--accent)'}}>{fmtCur(consumerPerL)}</td>
-                <td className="td-mono" style={{textAlign:'right',color:'var(--text3)'}}>—</td>
+                <td className="td-primary" style={{color:'var(--accent)'}}>Ugomba Noel Ltd (our RRP)<div style={{fontSize:10,color:'var(--text4)'}}>{oilType} oil</div></td>
+                {PACK_SIZES.map(p=><td key={p.label} className="td-mono" style={{textAlign:'right',color:'var(--accent)'}}>{fmtCur(consumerPerL*p.litres)}</td>)}
               </tr>
             </tbody>
           </table>
