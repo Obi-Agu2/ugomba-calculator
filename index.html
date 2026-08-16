@@ -1757,7 +1757,7 @@ function PriceCalculator({ user }) {
   });
 
   const num = (v) => parseFloat(v) || 0;
-  const setOv = (k,v) => setOvh(o=>({...o, [k]:num(v)}));
+  const setOv = (k,v) => setOvh(o=>({...o, [k]:v}));   // store raw string so the field clears/edits smoothly
   const addCustomOvh    = () => setCustomOvh(list=>[...list, {id:'co'+Date.now(), label:'', amount:''}]);
   const updateCustomOvh = (id, patch) => setCustomOvh(list=>list.map(x=>x.id===id?{...x,...patch}:x));
   const removeCustomOvh = (id) => setCustomOvh(list=>list.filter(x=>x.id!==id));
