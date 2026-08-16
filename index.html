@@ -688,11 +688,11 @@ const SEED_INVENTORY = [
 ];
 
 const SEED_BATCHES = [
-  { id:'B2024-001', type:'NaOH', date:'2024-04-01', operator:'Lab Technician', status:'approved', oil_volume:5000, oil_type:'Palm Oil', ffa:1.5, naoh_kg:7.52, approver:'Production Manager', approved_at:'2024-04-01' },
-  { id:'B2024-002', type:'Phosphoric', date:'2024-04-02', operator:'Lab Technician', status:'approved', oil_volume:5000, oil_type:'Palm Oil', acid_ml:250, approver:'Production Manager', approved_at:'2024-04-02' },
-  { id:'B2024-003', type:'VitaminA', date:'2024-04-03', operator:'Lab Technician', status:'approved', oil_volume:10000, target_conc:11, vitA_g:201.4, approver:'Production Manager', approved_at:'2024-04-03' },
-  { id:'B2024-004', type:'NaOH', date:'2024-04-03', operator:'Lab Technician', status:'rejected', oil_volume:3000, oil_type:'Palm Oil', ffa:2.1, naoh_kg:6.3, approver:'Production Manager', rejection_reason:'Incorrect FFA reading — retest required' },
-  { id:'B2024-005', type:'VitaminA', date:'2024-04-04', operator:'Lab Technician', status:'pending', oil_volume:8000, target_conc:11, vitA_g:161.1, approver:null },
+  { id:'B2024-001', type:'NaOH', date:'2024-04-01', operator:'Lab Technician', status:'approved', oil_volume:5000, oil_type:'Palm Oil', ffa:1.5, ffa_refined:0.05, naoh_kg:7.52, approver:'Production Manager', approved_at:'2024-04-01' },
+  { id:'B2024-002', type:'Phosphoric', date:'2024-04-02', operator:'Lab Technician', status:'approved', oil_volume:5000, oil_type:'Palm Oil', ffa:1.4, ffa_refined:0.06, acid_ml:250, approver:'Production Manager', approved_at:'2024-04-02' },
+  { id:'B2024-003', type:'VitaminA', date:'2024-04-03', operator:'Lab Technician', status:'approved', oil_volume:10000, oil_type:'Soybean Oil', ffa:1.6, ffa_refined:0.05, target_conc:11, vitA_g:201.4, approver:'Production Manager', approved_at:'2024-04-03' },
+  { id:'B2024-004', type:'NaOH', date:'2024-04-03', operator:'Lab Technician', status:'rejected', oil_volume:3000, oil_type:'Palm Oil', ffa:2.1, ffa_refined:0.09, naoh_kg:6.3, approver:'Production Manager', rejection_reason:'Incorrect FFA reading — retest required' },
+  { id:'B2024-005', type:'VitaminA', date:'2024-04-04', operator:'Lab Technician', status:'pending', oil_volume:8000, oil_type:'Soybean Oil', ffa:1.5, ffa_refined:0.04, target_conc:11, vitA_g:161.1, approver:null },
 ];
 
 const SEED_AUDIT = [
@@ -1337,6 +1337,7 @@ function Dashboard({ user, batches: allBatches, inventory: allInv, setPage, audi
 function NaOHCalc({ user, batches, setBatches, inventory, setInventory, addAudit, showToast }) {
   const [oilVol, setOilVol] = useState('');
   const [ffaPct, setFfaPct] = useState('');
+  const [refinedFfa, setRefinedFfa] = useState('');
   const [oilType, setOilType] = useState('Palm Oil');
   const [result, setResult] = useState(null);
   const [submitted, setSubmitted] = useState(false);
@@ -1358,7 +1359,7 @@ function NaOHCalc({ user, batches, setBatches, inventory, setInventory, addAudit
   const submit = () => {
     if (!result) return;
     const id = newBatchId(result.oilType, batches);
-    const batch = { id, type:'NaOH', date:todayStr(), operator:user.name, status:'pending', oil_volume:result.vol, oil_type:result.oilType, ffa:result.ffa, naoh_kg:parseFloat(result.naoh_excess.toFixed(3)), approver:null };
+    const batch = { id, type:'NaOH', date:todayStr(), operator:user.name, status:'pending', oil_volume:result.vol, oil_type:result.oilType, ffa:result.ffa, ffa_refined:(refinedFfa!==''?parseFloat(refinedFfa):null), naoh_kg:parseFloat(result.naoh_excess.toFixed(3)), approver:null };
     setBatches(p=>[...p,batch]);
     addAudit(`Submitted NaOH batch ${id} for approval — ${result.vol}L ${oilType} @ ${result.ffa}% FFA, NaOH: ${result.naoh_excess.toFixed(3)}kg`,'info','batch');
     setSubmitted(true);
@@ -1380,9 +1381,14 @@ function NaOHCalc({ user, batches, setBatches, inventory, setInventory, addAudit
             <input type="number" value={oilVol} onChange={e=>setOilVol(e.target.value)} placeholder="e.g. 5000" min="1"/>
           </div>
           <div className="field">
-            <label>FFA Content (%)</label>
+            <label>Crude Oil FFA (%)</label>
             <input type="number" step="0.01" value={ffaPct} onChange={e=>setFfaPct(e.target.value)} placeholder="e.g. 1.5" min="0.01" max="20"/>
-            <span className="field-hint">Free Fatty Acid percentage from titration</span>
+            <span className="field-hint">FFA of the crude oil (from titration)</span>
+          </div>
+          <div className="field">
+            <label>Refined Oil FFA (%)</label>
+            <input type="number" step="0.01" value={refinedFfa} onChange={e=>setRefinedFfa(e.target.value)} placeholder="e.g. 0.05" min="0" max="20"/>
+            <span className="field-hint">FFA after neutralisation (optional)</span>
           </div>
           <div className="field">
             <label>Oil Type</label>
@@ -1603,6 +1609,8 @@ function VitaminACalc({ user, batches, setBatches, inventory, setInventory, addA
   const [targetConc, setTargetConc] = useState('11');
   const [stockConc, setStockConc] = useState('500000');
   const [oilType, setOilType] = useState('Soybean Oil');
+  const [crudeFfa, setCrudeFfa] = useState('');
+  const [refinedFfa, setRefinedFfa] = useState('');
   const [result, setResult] = useState(null);
   const [submitted, setSubmitted] = useState(false);
 
@@ -1621,7 +1629,7 @@ function VitaminACalc({ user, batches, setBatches, inventory, setInventory, addA
   const submit = () => {
     if (!result) return;
     const id = newBatchId(oilType, batches);
-    const batch = { id, type:'VitaminA', date:todayStr(), operator:user.name, status:'pending', oil_volume:result.vol, oil_type:oilType, target_conc:result.target, vitA_g:parseFloat(result.vitA_g_excess.toFixed(2)), approver:null };
+    const batch = { id, type:'VitaminA', date:todayStr(), operator:user.name, status:'pending', oil_volume:result.vol, oil_type:oilType, ffa:(crudeFfa!==''?parseFloat(crudeFfa):null), ffa_refined:(refinedFfa!==''?parseFloat(refinedFfa):null), target_conc:result.target, vitA_g:parseFloat(result.vitA_g_excess.toFixed(2)), approver:null };
     setBatches(p=>[...p,batch]);
     addAudit(`Submitted VitaminA batch ${id} for approval — ${result.vol}L oil, ${result.vitA_g_excess.toFixed(2)}g Vit A @ ${result.target} IU/g`,'info','batch');
     setSubmitted(true);
@@ -1661,6 +1669,16 @@ function VitaminACalc({ user, batches, setBatches, inventory, setInventory, addA
               {Object.keys(OIL_FACTORS).map(o=><option key={o}>{o}</option>)}
             </select>
             <span className="field-hint">Batch no. line: {lineCode(oilType)}</span>
+          </div>
+          <div className="field">
+            <label>Crude Oil FFA (%)</label>
+            <input type="number" step="0.01" value={crudeFfa} onChange={e=>setCrudeFfa(e.target.value)} placeholder="e.g. 1.5"/>
+            <span className="field-hint">FFA of the crude oil (optional)</span>
+          </div>
+          <div className="field">
+            <label>Refined Oil FFA (%)</label>
+            <input type="number" step="0.01" value={refinedFfa} onChange={e=>setRefinedFfa(e.target.value)} placeholder="e.g. 0.05"/>
+            <span className="field-hint">FFA after refining (optional)</span>
           </div>
         </div>
         <div style={{marginTop:12}}>
@@ -2371,7 +2389,7 @@ function ApprovalQueue({ user, batches, setBatches, inventory, setInventory, add
     if (!clean.id || !String(clean.id).trim()) return showToast('Batch ID is required','error');
     clean.id = String(clean.id).trim();
     if (clean.id !== origId && batches.some(b => b.id === clean.id)) return showToast('That Batch ID already exists','error');
-    const numFields = ['oil_volume','ffa','naoh_kg','acid_ml','vitA_g','target_conc'];
+    const numFields = ['oil_volume','ffa','ffa_refined','naoh_kg','acid_ml','vitA_g','target_conc'];
     numFields.forEach(f => { if (clean[f]!==undefined && clean[f]!=='' && clean[f]!==null) clean[f] = parseFloat(clean[f]); });
     setBatches(prev => prev.map(x => x.id===origId ? clean : x));
     addAudit(`Batch ${origId}${clean.id!==origId?` → ${clean.id}`:''} edited by ${user.name} — status: ${clean.status}`,'info','approval');
@@ -2558,11 +2576,12 @@ function ApprovalQueue({ user, batches, setBatches, inventory, setInventory, add
                   {['pending','approved','rejected'].map(s=><option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
-              {editBatch.type==='NaOH' && <><div className="field"><label>FFA (%)</label><input type="number" value={editBatch.ffa||''} onChange={e=>setEditBatch({...editBatch,ffa:e.target.value})}/></div>
-                <div className="field"><label>NaOH (kg)</label><input type="number" value={editBatch.naoh_kg||''} onChange={e=>setEditBatch({...editBatch,naoh_kg:e.target.value})}/></div></>}
+              <div className="field"><label>Crude Oil FFA (%)</label><input type="number" step="0.01" value={editBatch.ffa??''} onChange={e=>setEditBatch({...editBatch,ffa:e.target.value})}/></div>
+              <div className="field"><label>Refined Oil FFA (%)</label><input type="number" step="0.01" value={editBatch.ffa_refined??''} onChange={e=>setEditBatch({...editBatch,ffa_refined:e.target.value})}/></div>
+              {editBatch.type==='NaOH' && <div className="field"><label>NaOH (kg)</label><input type="number" value={editBatch.naoh_kg||''} onChange={e=>setEditBatch({...editBatch,naoh_kg:e.target.value})}/></div>}
               {editBatch.type==='Phosphoric' && <div className="field"><label>H₃PO₄ (mL)</label><input type="number" value={editBatch.acid_ml||''} onChange={e=>setEditBatch({...editBatch,acid_ml:e.target.value})}/></div>}
               {editBatch.type==='VitaminA' && <><div className="field"><label>Target (IU/g)</label><input type="number" value={editBatch.target_conc||''} onChange={e=>setEditBatch({...editBatch,target_conc:e.target.value})}/></div>
-                <div className="field"><label>Vit A (g)</label><input type="number" value={editBatch.vitA_g||''} onChange={e=>setEditBatch({...editBatch,vitA_g:e.target.value})}/></div></>}
+                <div className="field"><label>Vit A used (g)</label><input type="number" value={editBatch.vitA_g||''} onChange={e=>setEditBatch({...editBatch,vitA_g:e.target.value})}/></div></>}
               <div className="field" style={{gridColumn:'1 / -1'}}><label>Notes / Rejection Reason</label><input value={editBatch.rejection_reason||''} onChange={e=>setEditBatch({...editBatch,rejection_reason:e.target.value})}/></div>
             </div>
             <div className="modal-actions">
@@ -3024,13 +3043,19 @@ function NAFDACReport({ batches, user }) {
     const statusColor = cleared ? '#1a7f43' : b.status==='pending' ? '#9a6212' : '#b23025';
     const statusKind  = cleared ? 'ok' : b.status==='pending' ? 'warn' : 'bad';
 
-    const materials = [['Oil Volume treated', fmtN(b.oil_volume)+' L']];
-    if (b.ffa!=null)        materials.push(['Free Fatty Acid (FFA) measured', b.ffa+' %']);
+    const ffaReduction = (b.ffa!=null && b.ffa_refined!=null) ? (b.ffa - b.ffa_refined) : null;
+    const materials = [
+      ['Refined Oil Batch Number', b.id],
+      ['Final Oil Batch Volume', fmtN(b.oil_volume)+' L'],
+      ['Crude Oil FFA', b.ffa!=null ? b.ffa+' %' : '—'],
+      ['Refined Oil FFA', b.ffa_refined!=null ? b.ffa_refined+' %' : '—'],
+    ];
+    if (ffaReduction!=null) materials.push(['FFA reduction on refining', fmt(ffaReduction,2)+' pts'+(b.ffa?` (${fmt((ffaReduction/b.ffa)*100,1)}%)`:'')]);
     if (b.type==='NaOH'      && b.naoh_kg!=null) materials.push(['NaOH used (neutralisation)', b.naoh_kg+' kg']);
     if (b.type==='Phosphoric'&& b.acid_ml!=null) materials.push(['H₃PO₄ used (degumming)', b.acid_ml+' mL']);
-    if (isVit) {
-      if (b.vitA_g!=null)     materials.push(['Vitamin A concentrate added', b.vitA_g+' g']);
-      if (b.target_conc!=null)materials.push(['Vitamin A concentration achieved', b.target_conc+' IU/g']);
+    if (b.vitA_g!=null)      materials.push(['Vitamin A used (to reach NAFDAC conc.)', b.vitA_g+' g']);
+    if (b.target_conc!=null) materials.push(['Vitamin A concentration achieved', b.target_conc+' IU/g']);
+    if (b.vitA_g!=null || b.target_conc!=null || isVit) {
       materials.push(['NAFDAC minimum required', '11 IU/g']);
       materials.push(['Vitamin A compliance', (b.target_conc||0)>=11 ? 'MEETS minimum' : 'BELOW minimum']);
     }
@@ -3060,7 +3085,7 @@ function NAFDACReport({ batches, user }) {
           ['Approved Date', b.approved_at||'—'],
           ['Batch Status', {status:statusKind, text:b.status.toUpperCase()}],
         ] },
-      { title:'Materials & Measurements Used',
+      { title:'Refining & Fortification Data',
         head:['Parameter','Amount / Value'],
         rows: materials },
       { title:`Product NAFDAC Registration Numbers — ${line}`,
@@ -3159,7 +3184,7 @@ function NAFDACReport({ batches, user }) {
             <tbody>
               {live.slice().reverse().map(b=>{
                 const r = batchReport(b);
-                const meas = [b.ffa!=null?`FFA ${b.ffa}%`:null, b.naoh_kg!=null?`NaOH ${b.naoh_kg}kg`:null, b.acid_ml!=null?`H₃PO₄ ${b.acid_ml}mL`:null, b.vitA_g!=null?`VitA ${b.vitA_g}g`:null, b.target_conc!=null?`${b.target_conc} IU/g`:null].filter(Boolean).join(' · ');
+                const meas = [b.ffa!=null?`Crude FFA ${b.ffa}%`:null, b.ffa_refined!=null?`Refined FFA ${b.ffa_refined}%`:null, b.naoh_kg!=null?`NaOH ${b.naoh_kg}kg`:null, b.acid_ml!=null?`H₃PO₄ ${b.acid_ml}mL`:null, b.vitA_g!=null?`VitA ${b.vitA_g}g`:null, b.target_conc!=null?`${b.target_conc} IU/g`:null].filter(Boolean).join(' · ');
                 return (
                   <tr key={b.id}>
                     <td className="td-mono">{b.id}</td>
