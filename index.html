@@ -608,6 +608,8 @@ const COMPANY = 'UGOMBA NOEL LTD';
 const COMPANY_SUB = 'Vegetable Oil Refinery · Operations Platform';
 const POSITION_LEVELS = { SuperAdmin:7, CEO:6, Director:5, Manager:4, Supervisor:3, 'Lab Technician':2, Secretary:1 };
 const OIL_FACTORS = { 'Palm Oil':1.0, 'Soybean Oil':0.98, 'Sunflower Oil':0.96, 'Groundnut Oil':1.02, 'Canola Oil':0.97 };
+/* Production line codes used in batch numbers: [Line]-[YYMMDD]-[Sequence] */
+const LINE_CODES = { 'Groundnut Oil':'GNO', 'Soybean Oil':'SBO', 'Palm Oil':'PMO', 'Sunflower Oil':'SFO', 'Canola Oil':'CNO' };
 
 /* Retail vegetable-oil brands used for the weekly competitor benchmark.
    `base` = indicative consumer price per litre (₦). Updated automatically
@@ -696,7 +698,15 @@ const fmt = (n, dec=2) => Number(n).toLocaleString('en-NG', {minimumFractionDigi
 const fmtN = (n) => Number(n).toLocaleString('en-NG', {minimumFractionDigits:0, maximumFractionDigits:0});
 const fmtCur = (n) => '₦' + fmtN(n);
 const posLevel = (pos) => POSITION_LEVELS[pos] || 0;
-const newBatchId = () => 'B' + new Date().getFullYear() + '-' + String(Date.now()).slice(-4);
+const lineCode = (oilType) => LINE_CODES[oilType] || (oilType ? oilType.replace(/[^A-Za-z]/g,'').slice(0,3).toUpperCase() : 'OIL');
+const yymmdd = (d=new Date()) => { const p=n=>String(n).padStart(2,'0'); return String(d.getFullYear()).slice(2)+p(d.getMonth()+1)+p(d.getDate()); };
+/* Batch number format: [Line]-[YYMMDD]-[Sequence] — e.g. GNO-260814-01, SBO-260814-01.
+   Sequence auto-increments per line per day based on existing batches. */
+const newBatchId = (oilType, batches) => {
+  const prefix = `${lineCode(oilType)}-${yymmdd()}-`;
+  const seq = (batches||[]).filter(b => typeof b.id === 'string' && b.id.startsWith(prefix)).length + 1;
+  return prefix + String(seq).padStart(2,'0');
+};
 const nowStr = () => new Date().toISOString().slice(0,16).replace('T',' ');
 const todayStr = () => new Date().toISOString().slice(0,10);
 const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -1323,7 +1333,7 @@ function NaOHCalc({ user, batches, setBatches, inventory, setInventory, addAudit
 
   const submit = () => {
     if (!result) return;
-    const id = newBatchId();
+    const id = newBatchId(result.oilType, batches);
     const batch = { id, type:'NaOH', date:todayStr(), operator:user.name, status:'pending', oil_volume:result.vol, oil_type:result.oilType, ffa:result.ffa, naoh_kg:parseFloat(result.naoh_excess.toFixed(3)), approver:null };
     setBatches(p=>[...p,batch]);
     addAudit(`Submitted NaOH batch ${id} for approval — ${result.vol}L ${oilType} @ ${result.ffa}% FFA, NaOH: ${result.naoh_excess.toFixed(3)}kg`,'info','batch');
@@ -1437,6 +1447,7 @@ function NaOHCalc({ user, batches, setBatches, inventory, setInventory, addAudit
 function PhosphoricCalc({ user, batches, setBatches, inventory, setInventory, addAudit, showToast }) {
   const [oilVol, setOilVol] = useState('');
   const [ironPpm, setIronPpm] = useState('2');
+  const [oilType, setOilType] = useState('Soybean Oil');
   const [result, setResult] = useState(null);
   const [submitted, setSubmitted] = useState(false);
 
@@ -1454,8 +1465,8 @@ function PhosphoricCalc({ user, batches, setBatches, inventory, setInventory, ad
 
   const submit = () => {
     if (!result) return;
-    const id = newBatchId();
-    const batch = { id, type:'Phosphoric', date:todayStr(), operator:user.name, status:'pending', oil_volume:result.vol, acid_ml:parseFloat(result.acid_total_ml.toFixed(1)), approver:null };
+    const id = newBatchId(oilType, batches);
+    const batch = { id, type:'Phosphoric', date:todayStr(), operator:user.name, status:'pending', oil_volume:result.vol, oil_type:oilType, acid_ml:parseFloat(result.acid_total_ml.toFixed(1)), approver:null };
     setBatches(p=>[...p,batch]);
     addAudit(`Submitted Phosphoric batch ${id} for approval — ${result.vol}L oil, ${result.acid_total_ml.toFixed(1)}mL H₃PO₄`,'info','batch');
     setSubmitted(true);
@@ -1480,6 +1491,13 @@ function PhosphoricCalc({ user, batches, setBatches, inventory, setInventory, ad
             <label>Iron Content (ppm)</label>
             <input type="number" step="0.1" value={ironPpm} onChange={e=>setIronPpm(e.target.value)} placeholder="default: 2 ppm"/>
             <span className="field-hint">From metals analysis; default 2ppm if unknown</span>
+          </div>
+          <div className="field">
+            <label>Oil Line</label>
+            <select value={oilType} onChange={e=>setOilType(e.target.value)}>
+              {Object.keys(OIL_FACTORS).map(o=><option key={o}>{o}</option>)}
+            </select>
+            <span className="field-hint">Batch no. line: {lineCode(oilType)}</span>
           </div>
           <div className="field" style={{maxWidth:160,minWidth:120}}>
             <label>&nbsp;</label>
@@ -1560,6 +1578,7 @@ function VitaminACalc({ user, batches, setBatches, inventory, setInventory, addA
   const [oilVol, setOilVol] = useState('');
   const [targetConc, setTargetConc] = useState('11');
   const [stockConc, setStockConc] = useState('500000');
+  const [oilType, setOilType] = useState('Soybean Oil');
   const [result, setResult] = useState(null);
   const [submitted, setSubmitted] = useState(false);
 
@@ -1577,8 +1596,8 @@ function VitaminACalc({ user, batches, setBatches, inventory, setInventory, addA
 
   const submit = () => {
     if (!result) return;
-    const id = newBatchId();
-    const batch = { id, type:'VitaminA', date:todayStr(), operator:user.name, status:'pending', oil_volume:result.vol, target_conc:result.target, vitA_g:parseFloat(result.vitA_g_excess.toFixed(2)), approver:null };
+    const id = newBatchId(oilType, batches);
+    const batch = { id, type:'VitaminA', date:todayStr(), operator:user.name, status:'pending', oil_volume:result.vol, oil_type:oilType, target_conc:result.target, vitA_g:parseFloat(result.vitA_g_excess.toFixed(2)), approver:null };
     setBatches(p=>[...p,batch]);
     addAudit(`Submitted VitaminA batch ${id} for approval — ${result.vol}L oil, ${result.vitA_g_excess.toFixed(2)}g Vit A @ ${result.target} IU/g`,'info','batch');
     setSubmitted(true);
@@ -1611,6 +1630,13 @@ function VitaminACalc({ user, batches, setBatches, inventory, setInventory, addA
             <label>Stock Concentrate (IU/g)</label>
             <input type="number" value={stockConc} onChange={e=>setStockConc(e.target.value)}/>
             <span className="field-hint">From concentrate supplier CoA</span>
+          </div>
+          <div className="field">
+            <label>Oil Line</label>
+            <select value={oilType} onChange={e=>setOilType(e.target.value)}>
+              {Object.keys(OIL_FACTORS).map(o=><option key={o}>{o}</option>)}
+            </select>
+            <span className="field-hint">Batch no. line: {lineCode(oilType)}</span>
           </div>
         </div>
         <div style={{marginTop:12}}>
