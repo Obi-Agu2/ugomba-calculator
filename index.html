@@ -931,10 +931,13 @@ function ReportActions({ meta, sections, filename }){
 }
 
 /* ── ROLE GUARD ── */
+/* Runtime permission set — kept in sync with App state so admins can edit the
+   permission matrix and have it take effect immediately. */
+let ACTIVE_PERMISSIONS = { ...DEFAULT_PERMISSIONS };
 function canAccessPage(user, perm) {
   if (!user) return false;
   if (user.role === 'superadmin' || user.role === 'admin') return true;
-  const perms = DEFAULT_PERMISSIONS[user.custom_role] || {};
+  const perms = ACTIVE_PERMISSIONS[user.custom_role] || {};
   return !!perms[perm];
 }
 function canByPosition(user, minPos) {
@@ -953,8 +956,18 @@ function App() {
   const [auditLog, setAuditLog] = useState(() => LS.get('audit', SEED_AUDIT));
   const [inflationRate, setInflationRate] = useState(() => LS.get('inflation', 18));
   const [marginAbove, setMarginAbove] = useState(() => LS.get('margin', 8));
+  const [permissions, setPermissions] = useState(() => {
+    const stored = LS.get('permissions', null);
+    if (!stored) return DEFAULT_PERMISSIONS;
+    const merged = {};
+    Object.keys(DEFAULT_PERMISSIONS).forEach(role => { merged[role] = { ...DEFAULT_PERMISSIONS[role], ...(stored[role]||{}) }; });
+    return merged;
+  });
   const [loginError, setLoginError] = useState('');
   const [toast, setToast] = useState(null);
+
+  // Keep the runtime permission guard in sync (used by canAccessPage during render)
+  ACTIVE_PERMISSIONS = permissions;
 
   // Persist state
   useEffect(() => { LS.set('users', users); }, [users]);
@@ -963,6 +976,7 @@ function App() {
   useEffect(() => { LS.set('audit', auditLog); }, [auditLog]);
   useEffect(() => { LS.set('inflation', inflationRate); }, [inflationRate]);
   useEffect(() => { LS.set('margin', marginAbove); }, [marginAbove]);
+  useEffect(() => { LS.set('permissions', permissions); }, [permissions]);
   useEffect(() => { SS.set(user); }, [user]);
 
   const showToast = (msg, type='success') => {
@@ -1016,7 +1030,7 @@ function App() {
   const sectionLabels = { main:'', calc:'Calculators', ops:'Operations', admin:'Administration' };
 
   const renderPage = () => {
-    const props = { user, batches, setBatches, inventory, setInventory, addAudit, showToast, users, setUsers, inflationRate, setInflationRate, marginAbove, setMarginAbove, auditLog };
+    const props = { user, batches, setBatches, inventory, setInventory, addAudit, showToast, users, setUsers, inflationRate, setInflationRate, marginAbove, setMarginAbove, auditLog, permissions, setPermissions };
     switch (page) {
       case 'dashboard':    return <Dashboard {...props} setPage={setPage}/>;
       case 'naoh':         return canAccessPage(user,'naoh_calculator') ? <NaOHCalc {...props}/> : <AccessDenied/>;
@@ -1734,9 +1748,9 @@ function PriceCalculator({ user }) {
   const [naohPricePerKg, setNaohPricePerKg] = useState('1200');  // bulk ₦/kg
   const [acidType, setAcidType]             = useState('Phosphoric'); // Phosphoric | Citric | Both
   const [phosPricePerL, setPhosPricePerL]   = useState('3500');  // bulk ₦/L
-  const [phosDoseMlPerL, setPhosDoseMlPerL] = useState('0.3');   // mL used per L oil
+  const [phosIronPpm, setPhosIronPpm]       = useState('2');     // iron ppm → auto dose (as in Phosphoric calc)
   const [citricPricePerKg, setCitricPricePerKg] = useState('2200'); // bulk ₦/kg
-  const [citricDoseGPerL, setCitricDoseGPerL]   = useState('0.2');  // g used per L oil
+  const [citricPct, setCitricPct]           = useState('0.1');   // % of oil weight → auto dose
   const [vitTargetIU, setVitTargetIU] = useState('11');           // IU/g (NAFDAC min)
   const [vitStockIU, setVitStockIU]   = useState('500000');       // concentrate potency IU/g
   const [vitPricePerKg, setVitPricePerKg] = useState('85000');    // bulk ₦/kg
@@ -1792,8 +1806,12 @@ function PriceCalculator({ user }) {
   const naohCostPerL = naohKgPerL * num(naohPricePerKg);              // auto-calculated
   const usePhos   = acidType==='Phosphoric' || acidType==='Both';
   const useCitric = acidType==='Citric'     || acidType==='Both';
-  const phosCostPerL   = usePhos   ? num(phosDoseMlPerL) * (num(phosPricePerL)/1000) : 0;   // mL/L × ₦/mL
-  const citricCostPerL = useCitric ? (num(citricDoseGPerL)/1000) * num(citricPricePerKg) : 0; // kg/L × ₦/kg
+  // Phosphoric dose auto-derived from iron content (same basis as the Phosphoric Acid calculator)
+  const phosDoseMlPerL = usePhos ? (num(phosIronPpm)*0.8 + 1.2)*10 * 0.92/1000 : 0; // mL H₃PO₄ per L oil
+  const phosCostPerL   = phosDoseMlPerL * (num(phosPricePerL)/1000);                // mL/L × ₦/mL
+  // Citric dose auto-derived from dosing rate (% of oil weight; ~920 g oil per finished L)
+  const citricDoseGPerL = useCitric ? (num(citricPct)/100) * 920 : 0;               // g per L oil
+  const citricCostPerL  = (citricDoseGPerL/1000) * num(citricPricePerKg);           // kg/L × ₦/kg
   const acidCostPerL   = phosCostPerL + citricCostPerL;
   const vitDoseGPerL   = num(vitStockIU)>0 ? (0.92*1000*num(vitTargetIU)/num(vitStockIU))*1.10 : 0; // g/L incl. 10% excess
   const vitCostPerL    = vitDoseGPerL * (num(vitPricePerKg)/1000);    // g/L × ₦/g
@@ -1928,7 +1946,7 @@ function PriceCalculator({ user }) {
           </div>
 
           <div className="section-title" style={{marginTop:16}}>Chemicals — bought in bulk, dosed per litre</div>
-          <div style={{fontSize:11,color:'var(--text3)',marginBottom:8}}>Enter the <strong>bulk unit price</strong> and the small <strong>dose used per litre</strong>; the cost per litre is auto-calculated. NaOH is derived automatically from the batch neutralisation requirement.</div>
+          <div style={{fontSize:11,color:'var(--text3)',marginBottom:8}}>Enter each <strong>bulk unit price</strong>; the small dose used per litre — and hence the cost per litre — is <strong>auto-calculated</strong> from process parameters: NaOH from FFA, phosphoric acid from iron content, citric acid from its dosing rate, and Vitamin A from the target IU.</div>
           <div className="form-grid cols-2">
             <div className="field"><label>FFA of crude oil (%)</label><input type="number" step="0.1" value={ffaPct} onChange={e=>setFfaPct(e.target.value)}/><span className="field-hint">Drives the NaOH dose</span></div>
             <div className="field"><label>NaOH bulk price (₦/kg)</label><input type="number" value={naohPricePerKg} onChange={e=>setNaohPricePerKg(e.target.value)}/></div>
@@ -1946,9 +1964,9 @@ function PriceCalculator({ user }) {
             <div className="field"><label>&nbsp;</label>
               <div className="inline-info" style={{padding:'6px 0'}}><span className="ii-label">Acid cost / L</span><span className="ii-value">₦{fmt(acidCostPerL,3)}</span></div>
             </div>
-            {usePhos && <div className="field"><label>Phosphoric dose (mL/L)</label><input type="number" step="0.05" value={phosDoseMlPerL} onChange={e=>setPhosDoseMlPerL(e.target.value)}/></div>}
+            {usePhos && <div className="field"><label>Iron content (ppm)</label><input type="number" step="0.1" value={phosIronPpm} onChange={e=>setPhosIronPpm(e.target.value)}/><span className="field-hint">Auto dose {fmt(phosDoseMlPerL,4)} mL/L → ₦{fmt(phosCostPerL,3)}/L</span></div>}
             {usePhos && <div className="field"><label>Phosphoric bulk (₦/L)</label><input type="number" value={phosPricePerL} onChange={e=>setPhosPricePerL(e.target.value)}/></div>}
-            {useCitric && <div className="field"><label>Citric dose (g/L)</label><input type="number" step="0.05" value={citricDoseGPerL} onChange={e=>setCitricDoseGPerL(e.target.value)}/></div>}
+            {useCitric && <div className="field"><label>Citric dose (% oil wt)</label><input type="number" step="0.01" value={citricPct} onChange={e=>setCitricPct(e.target.value)}/><span className="field-hint">Auto dose {fmt(citricDoseGPerL,3)} g/L → ₦{fmt(citricCostPerL,3)}/L</span></div>}
             {useCitric && <div className="field"><label>Citric bulk (₦/kg)</label><input type="number" value={citricPricePerKg} onChange={e=>setCitricPricePerKg(e.target.value)}/></div>}
           </div>
 
@@ -2315,11 +2333,15 @@ function ApprovalQueue({ user, batches, setBatches, inventory, setInventory, add
   };
   const saveBatchEdit = () => {
     if (!editBatch) return;
+    const origId = editBatch._origId || editBatch.id;
+    const clean = {...editBatch}; delete clean._origId;
+    if (!clean.id || !String(clean.id).trim()) return showToast('Batch ID is required','error');
+    clean.id = String(clean.id).trim();
+    if (clean.id !== origId && batches.some(b => b.id === clean.id)) return showToast('That Batch ID already exists','error');
     const numFields = ['oil_volume','ffa','naoh_kg','acid_ml','vitA_g','target_conc'];
-    const clean = {...editBatch};
     numFields.forEach(f => { if (clean[f]!==undefined && clean[f]!=='' && clean[f]!==null) clean[f] = parseFloat(clean[f]); });
-    setBatches(prev => prev.map(x => x.id===clean.id ? clean : x));
-    addAudit(`Batch ${clean.id} edited by ${user.name} — status: ${clean.status}, oil: ${clean.oil_volume}L`,'info','approval');
+    setBatches(prev => prev.map(x => x.id===origId ? clean : x));
+    addAudit(`Batch ${origId}${clean.id!==origId?` → ${clean.id}`:''} edited by ${user.name} — status: ${clean.status}`,'info','approval');
     showToast(`Batch ${clean.id} updated`); setEditBatch(null);
   };
 
@@ -2389,7 +2411,7 @@ function ApprovalQueue({ user, batches, setBatches, inventory, setInventory, add
       {isAdmin && (
         <div style={{display:'flex',gap:4,marginTop:10,paddingTop:10,borderTop:'1px solid var(--border)',flexWrap:'wrap'}}>
           <span style={{fontSize:11,color:'var(--text4)',alignSelf:'center',marginRight:4}}>Admin:</span>
-          <button className="btn btn-ghost btn-xs" onClick={()=>setEditBatch({...batch})}>Edit</button>
+          <button className="btn btn-ghost btn-xs" onClick={()=>setEditBatch({...batch, _origId:batch.id})}>Edit</button>
           <button className="btn btn-ghost btn-xs" onClick={()=>archiveBatch(batch)}>Archive</button>
           <button className="btn btn-danger btn-xs" onClick={()=>{ if(window.confirm(`Permanently delete batch ${batch.id}? This cannot be undone.`)) deleteBatch(batch); }}>Delete</button>
         </div>
@@ -2467,7 +2489,7 @@ function ApprovalQueue({ user, batches, setBatches, inventory, setInventory, add
                     {isAdmin&&(
                       <td>
                         <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-                          <button className="btn btn-ghost btn-xs" onClick={()=>setEditBatch({...b})}>Edit</button>
+                          <button className="btn btn-ghost btn-xs" onClick={()=>setEditBatch({...b, _origId:b.id})}>Edit</button>
                           <button className="btn btn-ghost btn-xs" onClick={()=>archiveBatch(b)}>{b.archived?'Restore':'Archive'}</button>
                           <button className="btn btn-danger btn-xs" onClick={()=>{ if(window.confirm(`Permanently delete batch ${b.id}? This cannot be undone.`)) deleteBatch(b); }}>Del</button>
                         </div>
@@ -2486,9 +2508,15 @@ function ApprovalQueue({ user, batches, setBatches, inventory, setInventory, add
       {editBatch && (
         <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setEditBatch(null)}>
           <div className="modal">
-            <div className="modal-title">Edit Batch: {editBatch.id}</div>
-            <div className="modal-sub">Admin override — correct entered data or change batch status.</div>
+            <div className="modal-title">Edit Batch: {editBatch._origId || editBatch.id}</div>
+            <div className="modal-sub">Admin override — correct the batch number, oil line, entered data or status.</div>
             <div className="form-grid cols-2">
+              <div className="field"><label>Batch Number</label><input value={editBatch.id||''} onChange={e=>setEditBatch({...editBatch,id:e.target.value})}/><span className="field-hint">Format: [Line]-[YYMMDD]-[Seq]</span></div>
+              <div className="field"><label>Oil Line</label>
+                <select value={editBatch.oil_type||'Soybean Oil'} onChange={e=>setEditBatch({...editBatch,oil_type:e.target.value})}>
+                  {Object.keys(OIL_FACTORS).map(o=><option key={o}>{o}</option>)}
+                </select>
+              </div>
               <div className="field"><label>Date</label><input value={editBatch.date||''} onChange={e=>setEditBatch({...editBatch,date:e.target.value})}/></div>
               <div className="field"><label>Operator</label><input value={editBatch.operator||''} onChange={e=>setEditBatch({...editBatch,operator:e.target.value})}/></div>
               <div className="field"><label>Oil Volume (L)</label><input type="number" value={editBatch.oil_volume||''} onChange={e=>setEditBatch({...editBatch,oil_volume:e.target.value})}/></div>
@@ -3117,8 +3145,21 @@ function AuditLogPage({ auditLog }) {
 /* ══════════════════════════════════════════════════════════
    ROLE & USER MANAGEMENT
 ══════════════════════════════════════════════════════════ */
-function RoleManagement({ user, users, setUsers, addAudit, showToast }) {
+function RoleManagement({ user, users, setUsers, addAudit, showToast, permissions, setPermissions }) {
   const [activeTab, setActiveTab] = useState('users');
+  const canEditPerms = user.role==='superadmin' || user.role==='admin';
+  const togglePermission = (role, perm) => {
+    setPermissions(prev => {
+      const next = { ...prev, [role]: { ...prev[role], [perm]: !prev[role]?.[perm] } };
+      return next;
+    });
+    addAudit(`Permission "${perm}" ${permissions[role]?.[perm]?'revoked from':'granted to'} role "${role}"`,'warning','system');
+  };
+  const resetPermissions = () => {
+    setPermissions(DEFAULT_PERMISSIONS);
+    addAudit('Permission matrix reset to defaults','warning','system');
+    showToast('Permissions reset to defaults');
+  };
   const [editUser, setEditUser]   = useState(null);
   const [showAdd, setShowAdd]     = useState(false);
   const [newUser, setNewUser]     = useState({ name:'', email:'', password:'', role:'user', position:'Lab Technician', custom_role:'lab_tech_role', active:true });
@@ -3306,26 +3347,39 @@ function RoleManagement({ user, users, setUsers, addAudit, showToast }) {
       {/* PERMISSIONS MATRIX */}
       {activeTab === 'roles' && (
         <div className="card">
-          <div className="section-title">Permission Matrix — Custom Roles</div>
+          <div className="flex-between mb-8">
+            <div className="section-title" style={{margin:0}}>Permission Matrix — Custom Roles {canEditPerms && <span style={{fontSize:11,color:'var(--text3)',fontWeight:400}}>· click a cell to toggle</span>}</div>
+            {canEditPerms && <button className="btn btn-ghost btn-sm" onClick={resetPermissions}>↺ Reset to defaults</button>}
+          </div>
           <div className="table-wrap">
             <table className="matrix-table">
               <thead>
                 <tr>
                   <th>Permission</th>
-                  {Object.keys(DEFAULT_PERMISSIONS).map(r=><th key={r}>{r.replace('_role','').replace('_',' ')}</th>)}
+                  {Object.keys(permissions).map(r=><th key={r} style={{textAlign:'center'}}>{r.replace('_role','').replace('_',' ')}</th>)}
                 </tr>
               </thead>
               <tbody>
                 {Object.entries(permNames).map(([perm,label])=>(
                   <tr key={perm}>
                     <td className="td-primary">{label}</td>
-                    {Object.values(DEFAULT_PERMISSIONS).map((perms,i)=>(
-                      <td key={i} style={{textAlign:'center'}}>
-                        <span style={{color:perms[perm]?'var(--green)':'var(--red)',fontSize:16}}>
-                          {perms[perm]?'✓':'✗'}
-                        </span>
-                      </td>
-                    ))}
+                    {Object.keys(permissions).map(role=>{
+                      const on = !!permissions[role]?.[perm];
+                      return (
+                        <td key={role} style={{textAlign:'center'}}>
+                          {canEditPerms ? (
+                            <button
+                              onClick={()=>togglePermission(role, perm)}
+                              title={`${on?'Revoke':'Grant'} ${label} for ${role.replace('_role','')}`}
+                              style={{cursor:'pointer',background:on?'rgba(46,204,113,.15)':'rgba(231,76,60,.12)',color:on?'var(--green)':'var(--red)',border:'1px solid '+(on?'rgba(46,204,113,.35)':'rgba(231,76,60,.3)'),borderRadius:6,width:30,height:26,fontSize:15,lineHeight:1}}>
+                              {on?'✓':'✗'}
+                            </button>
+                          ) : (
+                            <span style={{color:on?'var(--green)':'var(--red)',fontSize:16}}>{on?'✓':'✗'}</span>
+                          )}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
@@ -3333,7 +3387,7 @@ function RoleManagement({ user, users, setUsers, addAudit, showToast }) {
           </div>
           <div className="alert alert-info mt-12">
             <span className="alert-icon">ℹ</span>
-            <div>SuperAdmin and Admin roles bypass all permission checks and always have full access regardless of custom_role assignment. The permission matrix applies only to users with role=<span className="tag">user</span>.</div>
+            <div>{canEditPerms ? 'Click any cell to grant/revoke a permission for that custom role — changes apply immediately and persist. ' : ''}SuperAdmin and Admin roles bypass all permission checks and always have full access regardless of custom_role assignment. The matrix applies to users with role=<span className="tag">user</span>.</div>
           </div>
         </div>
       )}
