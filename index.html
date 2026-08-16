@@ -1781,9 +1781,12 @@ function PriceCalculator({ user }) {
   // Power is generated from a diesel plant: ~₦300,000 of diesel every 3 days (editable)
   const [dieselSpend, setDieselSpend] = useState('300000');
   const [dieselDays, setDieselDays]   = useState('3');
-  // Raw material & packaging (bulk purchase → effective ₦ per finished litre)
+  // Raw material (bulk purchase → effective ₦ per finished litre)
   const [rawMaterial, setRawMaterial] = useState('3100'); // ₦/L of finished oil
-  const [bottleCost, setBottleCost]   = useState('500');  // ₦/L packaging
+  // Each pack size has its OWN packaging cost (₦ per container) and its OWN share
+  // of the batch (product mix %). Both are editable per pack size.
+  const [packaging, setPackaging] = useState({ '40 cl':60, '1.5 L':180, '2.5 L':280, '5 L':480, '25 L':1800 });
+  const [mix, setMix]             = useState({ '40 cl':5,  '1.5 L':15,  '2.5 L':5,   '5 L':5,   '25 L':70 });
   // We buy chemicals in BULK and use only a small dose per litre. Cost/L is
   // computed automatically as (bulk unit price) × (dose used per litre).
   // NaOH is auto-derived from the batch neutralisation requirement (FFA-driven).
@@ -1822,6 +1825,8 @@ function PriceCalculator({ user }) {
 
   const num = (v) => parseFloat(v) || 0;
   const setOv = (k,v) => setOvh(o=>({...o, [k]:v}));   // store raw string so the field clears/edits smoothly
+  const setPackVal = (label,v) => setPackaging(o=>({...o, [label]:v}));
+  const setMixVal  = (label,v) => setMix(o=>({...o, [label]:v}));
   const addCustomOvh    = () => setCustomOvh(list=>[...list, {id:'co'+Date.now(), label:'', amount:''}]);
   const updateCustomOvh = (id, patch) => setCustomOvh(list=>list.map(x=>x.id===id?{...x,...patch}:x));
   const removeCustomOvh = (id) => setCustomOvh(list=>list.filter(x=>x.id!==id));
@@ -1866,22 +1871,47 @@ function PriceCalculator({ user }) {
   const vitDoseGPerL   = num(vitStockIU)>0 ? (0.92*1000*num(vitTargetIU)/num(vitStockIU))*1.10 : 0; // g/L incl. 10% excess
   const vitCostPerL    = vitDoseGPerL * (num(vitPricePerKg)/1000);    // g/L × ₦/g
   const chemPerL     = naohCostPerL + acidCostPerL + vitCostPerL;
-  const variablePerL = num(rawMaterial) + chemPerL + num(bottleCost);
-  const costPerL     = variablePerL + overheadPerL;
-  const exFactoryPerL= costPerL * (1 + num(profitPct)/100);   // our price to distributor
-  const profitPerL   = exFactoryPerL - costPerL;
+  // Oil contents cost per litre (raw material + chemicals + absorbed overhead) — excludes packaging.
+  const contentsPerL = num(rawMaterial) + chemPerL + overheadPerL;
 
-  const distPerL     = exFactoryPerL;
-  const wholePerL    = distPerL  * (1 + num(distMargin)/100);
-  const retailPerL   = wholePerL * (1 + num(wholeMargin)/100);
-  const consumerPerL = retailPerL* (1 + num(retailMargin)/100);
-
+  // Per-pack pricing: each pack size adds its OWN packaging cost, so cost is NOT linear per litre.
+  const packInfo = PACK_SIZES.map(p => {
+    const pkg        = num(packaging[p.label]);
+    const production = contentsPerL * p.litres + pkg;                 // production cost for one pack
+    const exFactory  = production * (1 + num(profitPct)/100);         // our price to distributor
+    const wholesale  = exFactory  * (1 + num(distMargin)/100);
+    const retail     = wholesale  * (1 + num(wholeMargin)/100);
+    const consumer   = retail     * (1 + num(retailMargin)/100);
+    return { ...p, pkg, pct:num(mix[p.label]), production, exFactory, wholesale, retail, consumer };
+  });
   const channels = [
-    { key:'Distributor (Ex-Factory)', perL:distPerL },
-    { key:'Wholesaler',  perL:wholePerL },
-    { key:'Retailer',    perL:retailPerL },
-    { key:'Consumer (RRP)', perL:consumerPerL },
+    { key:'Distributor (Ex-Factory)', field:'exFactory' },
+    { key:'Wholesaler',  field:'wholesale' },
+    { key:'Retailer',    field:'retail' },
+    { key:'Consumer (RRP)', field:'consumer' },
   ];
+
+  // Product-mix allocation across a production run (normalised to the mix total, so it always sums to output).
+  const mixTotal = PACK_SIZES.reduce((s,p)=>s+num(mix[p.label]),0);
+  const outVol   = num(outputVol) || monthlyVol;
+  const mixRows  = packInfo.map(pi => {
+    const litres = mixTotal>0 ? outVol * pi.pct/mixTotal : 0;
+    const units  = pi.litres>0 ? litres/pi.litres : 0;
+    return { ...pi, litres, units, prodTotal:units*pi.production, exRevenue:units*pi.exFactory, rrpRevenue:units*pi.consumer, profit:units*(pi.exFactory-pi.production) };
+  });
+  const totalCost      = mixRows.reduce((s,r)=>s+r.prodTotal,0);
+  const totalExFactory = mixRows.reduce((s,r)=>s+r.exRevenue,0);
+  const totalProfit    = mixRows.reduce((s,r)=>s+r.profit,0);
+  const totalRRP       = mixRows.reduce((s,r)=>s+r.rrpRevenue,0);
+  const rrpProfit      = totalRRP - totalCost;
+  const totalPackaging = mixRows.reduce((s,r)=>s+r.units*r.pkg,0);
+  const packagingPerL  = outVol>0 ? totalPackaging/outVol : 0;
+
+  // Blended per-litre figures across the actual product mix (for the summary metric cards).
+  const costPerL      = contentsPerL + packagingPerL;              // = totalCost / outVol
+  const exFactoryPerL = outVol>0 ? totalExFactory/outVol : 0;
+  const profitPerL    = exFactoryPerL - costPerL;
+  const consumerPerL  = outVol>0 ? totalRRP/outVol : 0;
 
   const costItems = [
     ['Raw Material (Oil)', num(rawMaterial)],
@@ -1889,20 +1919,12 @@ function PriceCalculator({ user }) {
     ...(usePhos   ? [['Phosphoric Acid (degumming)', phosCostPerL]] : []),
     ...(useCitric ? [['Citric Acid (degumming)', citricCostPerL]] : []),
     ['Vitamin A Fortification', vitCostPerL],
-    ['Bottle / Packaging', num(bottleCost)],
+    ['Packaging (avg across pack mix)', packagingPerL],
     ['Labour (amortised)', labourPerL],
     ['Transportation (amortised)', transportPerL],
     ['Power / Diesel (amortised)', dieselPerL],
     ...(customMonthly>0 ? [['Other Overhead (amortised)', customPerL]] : []),
   ];
-
-  // Expected profit for a production run based on total finished output volume.
-  const outVol = num(outputVol) || monthlyVol;
-  const totalCost      = costPerL*outVol;
-  const totalExFactory = exFactoryPerL*outVol;
-  const totalProfit    = profitPerL*outVol;
-  const totalRRP       = consumerPerL*outVol;
-  const rrpProfit      = (consumerPerL-costPerL)*outVol;
 
   const compAvg = competitors.prices.reduce((s,c)=>s+c.price,0) / (competitors.prices.length||1);
   const vsAvg = compAvg>0 ? ((consumerPerL - compAvg)/compAvg)*100 : 0;
@@ -1919,32 +1941,28 @@ function PriceCalculator({ user }) {
   };
   const reportSections = [
     { kpis:[
-      { label:'Production Cost / L', value:'₦'+fmt(costPerL,2), sub:`${oilType} oil` },
+      { label:'Production Cost / L', value:'₦'+fmt(costPerL,2), sub:`${oilType} oil · blended across mix` },
       { label:'Ex-Factory Price / L', value:'₦'+fmt(exFactoryPerL,2), sub:`incl. ${profitPct}% profit` },
       { label:'Profit / L', value:'₦'+fmt(profitPerL,2) },
       { label:'Recommended Consumer / L', value:'₦'+fmt(consumerPerL,2), sub:(vsAvg>=0?'+':'')+vsAvg.toFixed(1)+'% vs market' },
     ]},
-    { title:'Unit Cost Build-up (per litre)',
+    { title:'Unit Cost Build-up (per litre, blended across pack mix)',
       head:['Cost Component',{label:'₦ / Litre',num:true},{label:'Share',num:true}],
       rows:[...costItems.map(([l,v])=>[l,{num:true,text:fmt(v,2)},{num:true,text:(costPerL?((v/costPerL)*100).toFixed(1):'0.0')+'%'}]),
         ['Total Cost / Litre',{num:true,text:fmt(costPerL,2)},{num:true,text:'100.0%'}]] },
-    { title:`Expected Profit — ${fmtN(outVol)} L finished output`,
-      head:['Basis',{label:'Total (₦)',num:true}],
-      rows:[
-        ['Total Production Cost',{num:true,text:fmtN(totalCost)}],
-        ['Ex-Factory Revenue (sold to distributors)',{num:true,text:fmtN(totalExFactory)}],
-        ['Expected Profit (at ex-factory)',{num:true,text:fmtN(totalProfit)}],
-        ['Revenue if sold at Consumer RRP',{num:true,text:fmtN(totalRRP)}],
-        ['Profit if sold at Consumer RRP',{num:true,text:fmtN(rrpProfit)}],
-      ] },
-    { title:'Recommended Prices by Pack Size & Channel',
-      head:['Pack Size', {label:'Production Cost (₦)',num:true}, ...channels.map(c=>({label:c.key+' (₦)',num:true}))],
-      rows: PACK_SIZES.map(p=>[p.label, {num:true,text:fmtN(costPerL*p.litres)}, ...channels.map(c=>({num:true,text:fmtN(c.perL*p.litres)}))]) },
-    { note:`Production Cost is the pre-profit unit cost per pack. Ex-Factory (what a Distributor pays us) = production cost + ${profitPct}% target profit — hence the Distributor column sits above Production Cost. Each later tier then adds its margin: +${distMargin}% -> Wholesaler, +${wholeMargin}% -> Retailer, +${retailMargin}% -> Consumer. Fixed monthly labour and overheads are absorbed across monthly output (${fmt(batchesPerMonth,1)} batches/month x ${fmtN(num(batchSize))} L).` },
+    { title:'Packaging Cost & Recommended Prices by Pack Size',
+      head:['Pack Size',{label:'Packaging ₦/unit',num:true},{label:'Production Cost (₦)',num:true}, ...channels.map(c=>({label:c.key+' (₦)',num:true}))],
+      rows: packInfo.map(pi=>[pi.label, {num:true,text:fmtN(pi.pkg)}, {num:true,text:fmtN(pi.production)}, ...channels.map(c=>({num:true,text:fmtN(pi[c.field])}))]) },
+    { note:`Each pack size carries its OWN packaging cost, so prices are not a flat per-litre multiple. Production Cost = oil contents (${fmt(contentsPerL,2)}/L) x pack litres + that pack's packaging. Ex-Factory (Distributor) = production cost + ${profitPct}% profit; then +${distMargin}% -> Wholesaler, +${wholeMargin}% -> Retailer, +${retailMargin}% -> Consumer.` },
+    { title:`Product Mix & Expected Profit — ${fmtN(outVol)} L output`,
+      head:['Pack Size',{label:'% of Batch',num:true},{label:'Litres',num:true},{label:'Units',num:true},{label:'Prod. Cost (₦)',num:true},{label:'Ex-Factory Rev. (₦)',num:true},{label:'Profit (₦)',num:true}],
+      rows:[...mixRows.map(r=>[r.label,{num:true,text:fmt(mixTotal>0?r.pct/mixTotal*100:0,1)+'%'},{num:true,text:fmtN(r.litres)},{num:true,text:fmtN(r.units)},{num:true,text:fmtN(r.prodTotal)},{num:true,text:fmtN(r.exRevenue)},{num:true,text:fmtN(r.profit)}]),
+        ['Total',{num:true,text:'100%'},{num:true,text:fmtN(outVol)},{num:true,text:fmtN(mixRows.reduce((s,r)=>s+r.units,0))},{num:true,text:fmtN(totalCost)},{num:true,text:fmtN(totalExFactory)},{num:true,text:fmtN(totalProfit)}]] },
+    { note:`Product mix allocates the ${fmtN(outVol)} L run across pack sizes by your % assignment (normalised to your entered total of ${fmt(mixTotal,0)}%). Expected profit at ex-factory = ${fmtN(totalProfit)}; if sold at consumer RRP, profit = ${fmtN(rrpProfit)}.` },
     { title:`Competitor Benchmark — consumer price by pack (auto-updated ${longDate(competitors.tuesday)})`,
       head:['Brand', ...PACK_SIZES.map(p=>({label:p.label+' (₦)',num:true}))],
       rows: competitors.prices.map(c=>[c.name, ...PACK_SIZES.map(p=>({num:true,text:fmtN(c.price*p.litres)}))])
-        .concat([['Ugomba Noel Ltd (our RRP)', ...PACK_SIZES.map(p=>({num:true,text:fmtN(consumerPerL*p.litres)}))]]) },
+        .concat([['Ugomba Noel Ltd (our RRP)', ...packInfo.map(pi=>({num:true,text:fmtN(pi.consumer)}))]]) },
     { note:`Competitor pack prices are derived from each brand's per-litre price and are indicative market data refreshed automatically every Tuesday. Next scheduled update: ${longDate(nextTuesday())}.` },
   ];
 
@@ -1984,10 +2002,10 @@ function PriceCalculator({ user }) {
             <span className="ii-value" style={{color:'var(--accent)'}}>{fmtN(monthlyVol)} L</span>
           </div>
 
-          <div className="section-title" style={{marginTop:16}}>Raw Material &amp; Packaging (₦ per finished litre)</div>
+          <div className="section-title" style={{marginTop:16}}>Raw Material (₦ per finished litre)</div>
           <div className="form-grid cols-2">
             <div className="field"><label>Raw Material — Oil (₦/L)</label><input type="number" value={rawMaterial} onChange={e=>setRawMaterial(e.target.value)}/></div>
-            <div className="field"><label>Bottle / Packaging (₦/L)</label><input type="number" value={bottleCost} onChange={e=>setBottleCost(e.target.value)}/></div>
+            <div className="field"><label>&nbsp;</label><div className="field-hint" style={{paddingTop:10}}>Packaging is set per pack size below ↓</div></div>
           </div>
 
           <div className="section-title" style={{marginTop:16}}>Chemicals — bought in bulk, dosed per litre</div>
@@ -2085,8 +2103,37 @@ function PriceCalculator({ user }) {
         <div style={{fontSize:11,color:'var(--text3)',marginTop:8}}>Margins are cumulative down the chain (each tier adds its % over what it paid). The ranges above are typical international/FMCG benchmarks — adjust to your market.</div>
       </div>
 
+      <div className="card">
+        <div className="flex-between mb-8">
+          <div className="section-title" style={{margin:0}}>Packaging Cost &amp; Product Mix — per pack size</div>
+          <span className="badge" style={{background: Math.round(mixTotal)===100?'rgba(46,204,113,.14)':'rgba(245,166,35,.14)', color: Math.round(mixTotal)===100?'var(--green)':'var(--accent)'}}>Mix total: {fmt(mixTotal,0)}%{Math.round(mixTotal)===100?' ✓':' · normalised'}</span>
+        </div>
+        <div style={{fontSize:11,color:'var(--text3)',marginBottom:8}}>Give each pack size its <strong>own packaging cost</strong> (₦ per container) and its <strong>share of the batch</strong> (%). If your percentages don't total 100 they're normalised automatically.</div>
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Pack Size</th><th style={{textAlign:'right'}}>Packaging (₦/unit)</th><th style={{textAlign:'right'}}>% of Batch</th><th style={{textAlign:'right'}}>Litres of {fmtN(outVol)} L</th><th style={{textAlign:'right'}}>Units</th></tr></thead>
+            <tbody>
+              {PACK_SIZES.map(p=>{
+                const litres = mixTotal>0 ? outVol*num(mix[p.label])/mixTotal : 0;
+                const units  = p.litres>0 ? litres/p.litres : 0;
+                return (
+                  <tr key={p.label}>
+                    <td className="td-primary">{p.label}</td>
+                    <td style={{textAlign:'right'}}><input type="number" value={packaging[p.label]} onChange={e=>setPackVal(p.label,e.target.value)} style={{width:100,textAlign:'right',background:'var(--bg3)',border:'1px solid var(--border2)',color:'var(--text)',padding:'6px 8px',borderRadius:6,fontSize:12,outline:'none',fontFamily:'var(--mono)'}}/></td>
+                    <td style={{textAlign:'right'}}><input type="number" value={mix[p.label]} onChange={e=>setMixVal(p.label,e.target.value)} style={{width:70,textAlign:'right',background:'var(--bg3)',border:'1px solid var(--border2)',color:'var(--text)',padding:'6px 8px',borderRadius:6,fontSize:12,outline:'none',fontFamily:'var(--mono)'}}/></td>
+                    <td className="td-mono" style={{textAlign:'right',color:'var(--text3)'}}>{fmtN(litres)}</td>
+                    <td className="td-mono" style={{textAlign:'right',color:'var(--text3)'}}>{fmtN(units)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div style={{fontSize:11,color:'var(--text3)',marginTop:8}}>Bigger packs (e.g. 25 L) have a higher packaging cost per unit but a much lower packaging cost <em>per litre</em>, so their production cost per litre is lower — this is now reflected in every price below.</div>
+      </div>
+
       <div className="metrics-row cols-4 mb-16">
-        <div className="metric-card"><div className="metric-label">Production Cost / L</div><div className="metric-value" style={{fontSize:20}}>₦{fmt(costPerL,2)}</div><div className="metric-sub">{oilType} oil</div></div>
+        <div className="metric-card"><div className="metric-label">Production Cost / L</div><div className="metric-value" style={{fontSize:20}}>₦{fmt(costPerL,2)}</div><div className="metric-sub">{oilType} · blended across mix</div></div>
         <div className="metric-card accent"><div className="metric-label">Ex-Factory / L</div><div className="metric-value" style={{fontSize:20}}>₦{fmt(exFactoryPerL,2)}</div><div className="metric-sub">incl. {profitPct}% profit</div></div>
         <div className="metric-card green"><div className="metric-label">Profit / L</div><div className="metric-value" style={{fontSize:20}}>₦{fmt(profitPerL,2)}</div><div className="metric-sub">{costPerL>0?fmt((profitPerL/costPerL)*100,1):'0'}% markup</div></div>
         <div className="metric-card blue"><div className="metric-label">Recommended Consumer / L</div><div className="metric-value" style={{fontSize:20}}>₦{fmt(consumerPerL,2)}</div><div className="metric-sub">{vsAvg>=0?'+':''}{vsAvg.toFixed(1)}% vs market</div></div>
@@ -2110,46 +2157,52 @@ function PriceCalculator({ user }) {
         </div>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Pack Size</th><th style={{textAlign:'right'}}>Units from Output</th><th style={{textAlign:'right'}}>Ex-Factory / Unit</th><th style={{textAlign:'right'}}>Profit / Unit</th><th style={{textAlign:'right'}}>Total Profit</th></tr></thead>
+            <thead><tr><th>Pack Size</th><th style={{textAlign:'right'}}>% of Batch</th><th style={{textAlign:'right'}}>Litres</th><th style={{textAlign:'right'}}>Units</th><th style={{textAlign:'right'}}>Ex-Factory / Unit</th><th style={{textAlign:'right'}}>Profit / Unit</th><th style={{textAlign:'right'}}>Total Profit</th></tr></thead>
             <tbody>
-              {PACK_SIZES.map(p=>{
-                const units = p.litres>0 ? Math.floor(outVol/p.litres) : 0;
-                const exUnit = exFactoryPerL*p.litres;
-                const profUnit = profitPerL*p.litres;
-                return (
-                  <tr key={p.label}>
-                    <td className="td-primary">{p.label}</td>
-                    <td className="td-mono" style={{textAlign:'right'}}>{fmtN(units)}</td>
-                    <td className="td-mono" style={{textAlign:'right'}}>{fmtCur(exUnit)}</td>
-                    <td className="td-mono" style={{textAlign:'right',color:'var(--green)'}}>{fmtCur(profUnit)}</td>
-                    <td className="td-mono" style={{textAlign:'right'}}>{fmtCur(profUnit*units)}</td>
-                  </tr>
-                );
-              })}
+              {mixRows.map(r=>(
+                <tr key={r.label}>
+                  <td className="td-primary">{r.label}</td>
+                  <td className="td-mono" style={{textAlign:'right'}}>{fmt(mixTotal>0?r.pct/mixTotal*100:0,1)}%</td>
+                  <td className="td-mono" style={{textAlign:'right'}}>{fmtN(r.litres)}</td>
+                  <td className="td-mono" style={{textAlign:'right'}}>{fmtN(r.units)}</td>
+                  <td className="td-mono" style={{textAlign:'right'}}>{fmtCur(r.exFactory)}</td>
+                  <td className="td-mono" style={{textAlign:'right',color:'var(--green)'}}>{fmtCur(r.exFactory-r.production)}</td>
+                  <td className="td-mono" style={{textAlign:'right'}}>{fmtCur(r.profit)}</td>
+                </tr>
+              ))}
+              <tr style={{borderTop:'2px solid var(--accent)'}}>
+                <td className="td-primary" style={{color:'var(--accent)'}}>Total</td>
+                <td className="td-mono" style={{textAlign:'right',color:'var(--accent)'}}>100%</td>
+                <td className="td-mono" style={{textAlign:'right',color:'var(--accent)'}}>{fmtN(outVol)}</td>
+                <td className="td-mono" style={{textAlign:'right',color:'var(--accent)'}}>{fmtN(mixRows.reduce((s,r)=>s+r.units,0))}</td>
+                <td></td><td></td>
+                <td className="td-mono" style={{textAlign:'right',color:'var(--accent)'}}>{fmtCur(totalProfit)}</td>
+              </tr>
             </tbody>
           </table>
         </div>
-        <div style={{fontSize:11,color:'var(--text3)',marginTop:8}}>Expected profit = (ex-factory price − unit cost) × output. "Units from Output" shows how many packs of each size the {fmtN(outVol)} L run yields.</div>
+        <div style={{fontSize:11,color:'var(--text3)',marginTop:8}}>The {fmtN(outVol)} L run is split across pack sizes by your <strong>product-mix %</strong> above (normalised to your entered total of {fmt(mixTotal,0)}%). Profit / Unit = ex-factory price − that pack's production cost. Total Profit column sums to the Expected Profit card.</div>
       </div>
 
       <div className="card">
         <div className="section-title">Recommended Prices — by Pack Size &amp; Channel</div>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Pack Size</th><th style={{textAlign:'right'}}>Production Cost</th>{channels.map(c=><th key={c.key} style={{textAlign:'right'}}>{c.key}</th>)}</tr></thead>
+            <thead><tr><th>Pack Size</th><th style={{textAlign:'right'}}>Packaging</th><th style={{textAlign:'right'}}>Production Cost</th>{channels.map(c=><th key={c.key} style={{textAlign:'right'}}>{c.key}</th>)}</tr></thead>
             <tbody>
-              {PACK_SIZES.map(p=>(
-                <tr key={p.label}>
-                  <td className="td-primary">{p.label}</td>
-                  <td className="td-mono" style={{textAlign:'right',color:'var(--text3)'}}>{fmtCur(costPerL*p.litres)}</td>
-                  {channels.map(c=><td key={c.key} className="td-mono" style={{textAlign:'right',color:c.key.startsWith('Consumer')?'var(--accent)':'var(--text)'}}>{fmtCur(c.perL*p.litres)}</td>)}
+              {packInfo.map(pi=>(
+                <tr key={pi.label}>
+                  <td className="td-primary">{pi.label}</td>
+                  <td className="td-mono" style={{textAlign:'right',color:'var(--text4)'}}>{fmtCur(pi.pkg)}</td>
+                  <td className="td-mono" style={{textAlign:'right',color:'var(--text3)'}}>{fmtCur(pi.production)}</td>
+                  {channels.map(c=><td key={c.key} className="td-mono" style={{textAlign:'right',color:c.key.startsWith('Consumer')?'var(--accent)':'var(--text)'}}>{fmtCur(pi[c.field])}</td>)}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
         <div style={{fontSize:11,color:'var(--text3)',marginTop:8}}>
-          <strong>Production Cost</strong> = the pre-profit unit cost per pack (₦{fmt(costPerL,2)}/L). <strong>Distributor (Ex-Factory)</strong> = production cost + your {profitPct}% profit — this is our selling price to distributors, which is why it sits just above production cost (not the same as it). Each later tier adds its margin: +{distMargin}% → Wholesaler, +{wholeMargin}% → Retailer, +{retailMargin}% → Consumer (RRP).
+          Each pack carries its <strong>own packaging cost</strong>, so <strong>Production Cost</strong> = oil contents (₦{fmt(contentsPerL,2)}/L) × pack litres + that pack's packaging (not a flat per-litre figure). <strong>Distributor (Ex-Factory)</strong> = production cost + your {profitPct}% profit; then +{distMargin}% → Wholesaler, +{wholeMargin}% → Retailer, +{retailMargin}% → Consumer (RRP).
         </div>
       </div>
 
@@ -2184,7 +2237,7 @@ function PriceCalculator({ user }) {
               <tr style={{borderTop:'2px solid var(--accent)'}}>
                 <td className="td-primary" style={{color:'var(--accent)'}}>Ugomba Noel Ltd (our RRP)<div style={{fontSize:10,color:'var(--text4)'}}>{oilType} oil</div></td>
                 <td className="td-mono" style={{textAlign:'right',color:'var(--accent)'}}>{fmtCur(consumerPerL)}</td>
-                {PACK_SIZES.map(p=><td key={p.label} className="td-mono" style={{textAlign:'right',color:'var(--accent)'}}>{fmtCur(consumerPerL*p.litres)}</td>)}
+                {packInfo.map(pi=><td key={pi.label} className="td-mono" style={{textAlign:'right',color:'var(--accent)'}}>{fmtCur(pi.consumer)}</td>)}
               </tr>
             </tbody>
           </table>
