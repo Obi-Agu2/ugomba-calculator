@@ -565,12 +565,12 @@ const OIL_FACTORS = { 'Palm Oil':1.0, 'Soybean Oil':0.98, 'Sunflower Oil':0.96, 
    `base` = indicative consumer price per litre (₦). Updated automatically
    every Tuesday with a deterministic weekly market fluctuation (see PriceCalculator). */
 const COMPETITOR_BRANDS = [
-  { name:"Devon King's", grade:'Soybean / Vegetable', base:1750 },
-  { name:'Kings Oil',     grade:'Groundnut / Vegetable', base:1820 },
-  { name:'Power Oil',     grade:'Soybean', base:1680 },
-  { name:'Grand Pure Oil',grade:'Soybean', base:1900 },
-  { name:'Sunola',        grade:'Soybean', base:1720 },
-  { name:'Golden Terra',  grade:'Vegetable', base:1650 },
+  { name:"Devon King's", grade:'Soybean / Vegetable', base:3200 },
+  { name:'Kings Oil',     grade:'Groundnut / Vegetable', base:3350 },
+  { name:'Power Oil',     grade:'Soybean', base:2950 },
+  { name:'Grand Pure Oil',grade:'Soybean', base:3500 },
+  { name:'Sunola',        grade:'Soybean', base:3100 },
+  { name:'Golden Terra',  grade:'Vegetable', base:2880 },
 ];
 const DAY_MS = 86400000;
 function weeklyCompetitorPrices(tuesday){
@@ -1519,8 +1519,8 @@ function PriceCalculator({ user }) {
   const [competitors] = useState(() => {
     const t = mostRecentTuesday(); const key = t.toISOString().slice(0,10);
     const stored = LS.get('competitors', null);
-    if (stored && stored.tuesday === key) return stored;
-    const fresh = { tuesday:key, updatedAt: nowStr(), prices: weeklyCompetitorPrices(t) };
+    if (stored && stored.tuesday === key && stored.v === 2) return stored;
+    const fresh = { v:2, tuesday:key, updatedAt: nowStr(), prices: weeklyCompetitorPrices(t) };
     LS.set('competitors', fresh);
     return fresh;
   });
@@ -1728,6 +1728,8 @@ function PriceCalculator({ user }) {
         </div>
         <div style={{fontSize:11,color:'var(--text3)',marginTop:8}}>
           Market average: <strong style={{color:'var(--text2)'}}>{fmtCur(compAvg)}</strong>/L. Our recommended RRP is {vsAvg>=0?'above':'below'} market by {Math.abs(vsAvg).toFixed(1)}%. Competitor figures are indicative and refreshed automatically each Tuesday.
+          {vsAvg>25 && <span style={{color:'var(--accent)'}}> ⚠ Your required price is well above market — review raw-material sourcing, overheads or the profit/margin assumptions to stay competitive.</span>}
+          {vsAvg<-15 && <span style={{color:'var(--green)'}}> ✓ You have room to raise price or offer trade discounts while remaining competitive.</span>}
         </div>
       </div>
     </div>
