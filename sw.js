@@ -1,6 +1,6 @@
 /* Ugomba Noel Ltd — Operations Platform service worker.
    Provides installable PWA + offline app-shell caching. */
-const CACHE = 'ugomba-noel-v2-2';
+const CACHE = 'ugomba-noel-v3';
 const CORE = [
   './',
   './index.html',
@@ -30,10 +30,14 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
 
-  // App navigation: network-first, fall back to cached shell when offline.
-  if (req.mode === 'navigate') {
+  // App navigation & the app HTML: always fetch the freshest copy, bypassing the
+  // browser/GitHub-Pages HTTP cache (cache:'reload'), so deploys reach users on a
+  // normal refresh. Fall back to the cached shell only when offline.
+  const url = new URL(req.url);
+  const isAppHtml = req.mode === 'navigate' || url.pathname.endsWith('/index.html') || url.pathname.endsWith('/');
+  if (isAppHtml) {
     event.respondWith(
-      fetch(req)
+      fetch(req, { cache: 'reload' })
         .then((res) => {
           const copy = res.clone();
           caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});

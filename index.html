@@ -554,11 +554,26 @@ body{-webkit-tap-highlight-color:rgba(245,166,35,.15);overscroll-behavior-y:none
 <div id="root"></div>
 
 <script>
-/* Register the service worker for offline/installable PWA support.
+/* Register the service worker for offline/installable PWA support and make new
+   deploys load automatically (no manual hard-refresh needed).
    SWs require https or localhost; fails silently elsewhere (e.g. file://). */
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function () {
-    navigator.serviceWorker.register('sw.js').catch(function (err) {
+    navigator.serviceWorker.register('sw.js').then(function (reg) {
+      // Check for a newer version right away, and periodically.
+      reg.update();
+      setInterval(function () { reg.update(); }, 60 * 60 * 1000);
+      reg.addEventListener('updatefound', function () {
+        var nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener('statechange', function () {
+          // A new version installed while an old one is already controlling the page → refresh once.
+          if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+            window.location.reload();
+          }
+        });
+      });
+    }).catch(function (err) {
       console.warn('Service worker registration failed:', err);
     });
   });
@@ -2149,7 +2164,7 @@ function PriceCalculator({ user }) {
         <div style={{fontSize:12,color:'var(--text3)',marginBottom:8}}>
           Last updated: <strong style={{color:'var(--text2)'}}>{longDate(competitors.tuesday)}</strong> · Next auto-update: <strong style={{color:'var(--text2)'}}>{longDate(nextTuesday())}</strong>
         </div>
-        <div style={{fontSize:11,color:'var(--text3)',marginBottom:6}}>Edit each competitor's <strong>price per litre</strong> (and brand name if needed) — the pack-size prices below update automatically.</div>
+        <div style={{fontSize:11,color:'var(--text3)',marginBottom:6}}>These are <strong>indicative estimates</strong> (not live internet prices). If a figure is wrong, just type the correct <strong>price per litre</strong> for that competitor (and rename the brand if needed) — the pack-size prices below update automatically and your edits are saved.</div>
         <div className="table-wrap">
           <table>
             <thead><tr><th>Brand</th><th style={{textAlign:'right'}}>Price / L (edit)</th>{PACK_SIZES.map(p=><th key={p.label} style={{textAlign:'right'}}>{p.label}</th>)}</tr></thead>
