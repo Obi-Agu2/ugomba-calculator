@@ -1827,7 +1827,7 @@ function PriceCalculator({ user }) {
   const consumerPerL = retailPerL* (1 + num(retailMargin)/100);
 
   const channels = [
-    { key:'Distributor', perL:distPerL },
+    { key:'Distributor (Ex-Factory)', perL:distPerL },
     { key:'Wholesaler',  perL:wholePerL },
     { key:'Retailer',    perL:retailPerL },
     { key:'Consumer (RRP)', perL:consumerPerL },
@@ -1887,10 +1887,10 @@ function PriceCalculator({ user }) {
         ['Revenue if sold at Consumer RRP',{num:true,text:fmtN(totalRRP)}],
         ['Profit if sold at Consumer RRP',{num:true,text:fmtN(rrpProfit)}],
       ] },
-    { title:'Recommended Selling Prices by Pack Size & Channel',
-      head:['Pack Size', ...channels.map(c=>({label:c.key+' (₦)',num:true}))],
-      rows: PACK_SIZES.map(p=>[p.label, ...channels.map(c=>({num:true,text:fmtN(c.perL*p.litres)}))]) },
-    { note:`Channel prices cascade from the ex-factory price using best-practice trade margins: Distributor ${distMargin}% -> Wholesaler ${wholeMargin}% -> Retailer ${retailMargin}%. Fixed monthly labour and overheads are absorbed across monthly output (${fmt(batchesPerMonth,1)} batches/month x ${fmtN(num(batchSize))} L). Power is derived from diesel spend of ${fmtN(num(dieselSpend))} every ${num(dieselDays)} days.` },
+    { title:'Recommended Prices by Pack Size & Channel',
+      head:['Pack Size', {label:'Production Cost (₦)',num:true}, ...channels.map(c=>({label:c.key+' (₦)',num:true}))],
+      rows: PACK_SIZES.map(p=>[p.label, {num:true,text:fmtN(costPerL*p.litres)}, ...channels.map(c=>({num:true,text:fmtN(c.perL*p.litres)}))]) },
+    { note:`Production Cost is the pre-profit unit cost per pack. Ex-Factory (what a Distributor pays us) = production cost + ${profitPct}% target profit — hence the Distributor column sits above Production Cost. Each later tier then adds its margin: +${distMargin}% -> Wholesaler, +${wholeMargin}% -> Retailer, +${retailMargin}% -> Consumer. Fixed monthly labour and overheads are absorbed across monthly output (${fmt(batchesPerMonth,1)} batches/month x ${fmtN(num(batchSize))} L).` },
     { title:`Competitor Benchmark — consumer price by pack (auto-updated ${longDate(competitors.tuesday)})`,
       head:['Brand', ...PACK_SIZES.map(p=>({label:p.label+' (₦)',num:true}))],
       rows: competitors.prices.map(c=>[c.name, ...PACK_SIZES.map(p=>({num:true,text:fmtN(c.price*p.litres)}))])
@@ -1988,17 +1988,19 @@ function PriceCalculator({ user }) {
           <div className="form-grid cols-2">
             {Object.keys(ovhLabels).map(k=><OvField key={k} k={k}/>)}
           </div>
-          <div style={{display:'flex',flexDirection:'column',gap:6,marginTop:8}}>
+          <div style={{fontSize:11,color:'var(--text3)',marginTop:12,marginBottom:4,fontWeight:600,textTransform:'uppercase',letterSpacing:'.5px'}}>Additional Workers &amp; Expenses</div>
+          <div style={{display:'flex',flexDirection:'column',gap:6}}>
             {customOvh.map(c=>(
               <div key={c.id} style={{display:'flex',gap:6,alignItems:'center'}}>
-                <input style={{flex:2,background:'var(--bg3)',border:'1px solid var(--border)',color:'var(--text)',padding:'8px 10px',borderRadius:6,fontSize:13,outline:'none'}} placeholder="Overhead name (e.g. Rent, Insurance, Water)" value={c.label} onChange={e=>updateCustomOvh(c.id,{label:e.target.value})}/>
+                <input style={{flex:2,background:'var(--bg3)',border:'1px solid var(--border)',color:'var(--text)',padding:'8px 10px',borderRadius:6,fontSize:13,outline:'none'}} placeholder="Name (e.g. Extra Worker, Rent, Water, Insurance)" value={c.label} onChange={e=>updateCustomOvh(c.id,{label:e.target.value})}/>
                 <input type="number" style={{flex:1,minWidth:90,background:'var(--bg3)',border:'1px solid var(--border)',color:'var(--text)',padding:'8px 10px',borderRadius:6,fontSize:13,outline:'none'}} placeholder="₦/mo" value={c.amount} onChange={e=>updateCustomOvh(c.id,{amount:e.target.value})}/>
                 <button className="btn btn-danger btn-xs" onClick={()=>removeCustomOvh(c.id)} title="Remove line">✕</button>
               </div>
             ))}
+            {customOvh.length===0 && <div style={{fontSize:11,color:'var(--text4)'}}>No extra lines yet — add workers (e.g. more cleaners, loaders) or expenses (rent, water, internet…).</div>}
           </div>
-          <button className="btn btn-ghost btn-sm" style={{marginTop:8}} onClick={addCustomOvh}>+ Add Overhead Line</button>
-          {customMonthly>0 && <div className="inline-info" style={{marginTop:6}}><span className="ii-label">Custom overhead / month</span><span className="ii-value">{fmtCur(customMonthly)}</span></div>}
+          <button className="btn btn-ghost btn-sm" style={{marginTop:8}} onClick={addCustomOvh}>+ Add Worker / Expense</button>
+          {customMonthly>0 && <div className="inline-info" style={{marginTop:6}}><span className="ii-label">Additional workers &amp; expenses / month</span><span className="ii-value">{fmtCur(customMonthly)}</span></div>}
 
           <div className="section-title" style={{marginTop:16}}>Power — Diesel Generator</div>
           <div className="form-grid cols-2">
@@ -2025,11 +2027,12 @@ function PriceCalculator({ user }) {
       <div className="card">
         <div className="section-title">Pricing Parameters</div>
         <div className="form-grid cols-4">
-          <div className="field"><label>Target Profit (%)</label><input type="number" value={profitPct} onChange={e=>setProfitPct(e.target.value)}/><span className="field-hint">Applied over unit cost</span></div>
-          <div className="field"><label>Distributor Margin (%)</label><input type="number" value={distMargin} onChange={e=>setDistMargin(e.target.value)}/></div>
-          <div className="field"><label>Wholesaler Margin (%)</label><input type="number" value={wholeMargin} onChange={e=>setWholeMargin(e.target.value)}/></div>
-          <div className="field"><label>Retailer Margin (%)</label><input type="number" value={retailMargin} onChange={e=>setRetailMargin(e.target.value)}/></div>
+          <div className="field"><label>Target Profit (%)</label><input type="number" value={profitPct} onChange={e=>setProfitPct(e.target.value)}/><span className="field-hint">Applied over unit cost · edible-oil manufacturers typically run ~10–20% net</span></div>
+          <div className="field"><label>Distributor Margin (%)</label><input type="number" value={distMargin} onChange={e=>setDistMargin(e.target.value)}/><span className="field-hint">International average ≈ 5–10% (bulk distributors)</span></div>
+          <div className="field"><label>Wholesaler Margin (%)</label><input type="number" value={wholeMargin} onChange={e=>setWholeMargin(e.target.value)}/><span className="field-hint">International average ≈ 8–15%</span></div>
+          <div className="field"><label>Retailer Margin (%)</label><input type="number" value={retailMargin} onChange={e=>setRetailMargin(e.target.value)}/><span className="field-hint">International average ≈ 15–30% for FMCG food</span></div>
         </div>
+        <div style={{fontSize:11,color:'var(--text3)',marginTop:8}}>Margins are cumulative down the chain (each tier adds its % over what it paid). The ranges above are typical international/FMCG benchmarks — adjust to your market.</div>
       </div>
 
       <div className="metrics-row cols-4 mb-16">
@@ -2080,21 +2083,24 @@ function PriceCalculator({ user }) {
       </div>
 
       <div className="card">
-        <div className="section-title">Recommended Selling Prices — by Pack Size &amp; Channel</div>
+        <div className="section-title">Recommended Prices — by Pack Size &amp; Channel</div>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Pack Size</th>{channels.map(c=><th key={c.key} style={{textAlign:'right'}}>{c.key}</th>)}</tr></thead>
+            <thead><tr><th>Pack Size</th><th style={{textAlign:'right'}}>Production Cost</th>{channels.map(c=><th key={c.key} style={{textAlign:'right'}}>{c.key}</th>)}</tr></thead>
             <tbody>
               {PACK_SIZES.map(p=>(
                 <tr key={p.label}>
                   <td className="td-primary">{p.label}</td>
+                  <td className="td-mono" style={{textAlign:'right',color:'var(--text3)'}}>{fmtCur(costPerL*p.litres)}</td>
                   {channels.map(c=><td key={c.key} className="td-mono" style={{textAlign:'right',color:c.key.startsWith('Consumer')?'var(--accent)':'var(--text)'}}>{fmtCur(c.perL*p.litres)}</td>)}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        <div style={{fontSize:11,color:'var(--text3)',marginTop:8}}>Cascade: Ex-Factory → +{distMargin}% Distributor → +{wholeMargin}% Wholesaler → +{retailMargin}% Retailer. Each column is the price that tier should pay per pack.</div>
+        <div style={{fontSize:11,color:'var(--text3)',marginTop:8}}>
+          <strong>Production Cost</strong> = the pre-profit unit cost per pack (₦{fmt(costPerL,2)}/L). <strong>Distributor (Ex-Factory)</strong> = production cost + your {profitPct}% profit — this is our selling price to distributors, which is why it sits just above production cost (not the same as it). Each later tier adds its margin: +{distMargin}% → Wholesaler, +{wholeMargin}% → Retailer, +{retailMargin}% → Consumer (RRP).
+        </div>
       </div>
 
       <div className="card">
