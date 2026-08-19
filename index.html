@@ -2111,6 +2111,7 @@ function PriceCalculator({ user }) {
             <span className="ii-value" style={{color:'var(--accent)'}}>{fmtCur(fixedMonthly)}</span>
           </div>
           <div className="inline-info"><span className="ii-label">Labour / litre (absorbed)</span><span className="ii-value">₦{fmt(labourPerL,2)}</span></div>
+          <div className="inline-info"><span className="ii-label">Transport / litre (absorbed)</span><span className="ii-value">₦{fmt(transportPerL,2)}</span></div>
           <div className="inline-info"><span className="ii-label">Power (diesel) / litre</span><span className="ii-value">₦{fmt(dieselPerL,2)}</span></div>
           <div className="inline-info"><span className="ii-label">Total overhead / litre</span><span className="ii-value">₦{fmt(overheadPerL,2)}</span></div>
         </div>
@@ -2181,8 +2182,9 @@ function PriceCalculator({ user }) {
           </table>
         </div>
         <div style={{fontSize:11,color:'var(--text3)',marginTop:8}}>
-          Oil {fmtCur(oilCostPerL)}/L = {fmtCur(num(rawMaterial))} crude ÷ {fmt(num(yieldPct),1)}% yield.
-          Overhead {fmtCur(overheadPerL)}/L = {fmtCur(fixedMonthly)} / month ÷ {fmtN(monthlyVol)} L.
+          Oil ₦{fmt(oilCostPerL,2)}/L = ₦{fmt(num(rawMaterial),2)} crude ÷ {fmt(num(yieldPct),1)}% yield.
+          Overhead ₦{fmt(overheadPerL,2)}/L = {fmtCur(fixedMonthly)} monthly fixed ÷ {fmtN(monthlyVol)} L finished
+          {customMonthly>0?` (includes ${fmtCur(customMonthly)} extra lines)`:''}.
           The 25 L column is the blended per-litre figure × 25 (packaging on a real 25 L keg is that keg's own container cost, shown in the price table below).
         </div>
       </div>
