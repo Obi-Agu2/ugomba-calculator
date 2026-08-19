@@ -587,6 +587,7 @@ if ('serviceWorker' in navigator) {
 <script type="text/babel">
 /* ============================================================
    UGOMBA NOEL LTD — OPERATIONS PLATFORM
+   v2.2.1 — Oil & overhead pricing corrections
    v2.2.0 — Full deployable build (installable PWA)
    Auth: SuperAdmin / Admin / Manager / Lab Tech / Secretary
    Modules: NaOH · Phosphoric · Vitamin A · Cost · Price Setting
@@ -597,6 +598,9 @@ if ('serviceWorker' in navigator) {
          · inventory expiry tracking · diesel-based power costing
          · labour absorption by batch · phosphoric/citric/both acid
          · expected-profit by output volume · company name UGOMBA NOEL LTD
+   v2.2.1: Cost Analysis oil is ₦/L × litres (no ÷1000) · Price Setting uses
+         crude ÷ refining yield and absorbs overhead over batches actually run
+         · NaOH dose uses FFA%/100 (not /1000)
    ============================================================ */
 
 const { useState, useEffect, useCallback, useMemo, useRef } = React;
@@ -1084,7 +1088,7 @@ function App() {
           <div className="sidebar-logo-hex">⬡</div>
           <div className="sidebar-logo-title">Ugomba Noel Ltd</div>
           <div className="sidebar-logo-sub">Vegetable Oil Refinery</div>
-          <div className="sidebar-logo-version">v2.2.0 · PWA · Operations Platform</div>
+          <div className="sidebar-logo-version">v2.2.1 · PWA · Operations Platform</div>
         </div>
 
         {Object.entries(sections).map(([sec, items]) => (
@@ -1361,7 +1365,9 @@ function NaOHCalc({ user, batches, setBatches, inventory, setInventory, addAudit
     const vol = parseFloat(oilVol), ffa = parseFloat(ffaPct);
     if (!vol || !ffa || vol <= 0 || ffa <= 0) return;
     const factor = OIL_FACTORS[oilType] || 1;
-    const naoh_theoretical = (vol * ffa * 0.142 * factor) / 1000;
+    // kg NaOH = oil kg (≈ L) × (FFA%/100) × 0.142 × oil factor. FFA is entered as a
+    // percent (e.g. 1.5), so divide by 100 — not 1000, which understated the dose 10×.
+    const naoh_theoretical = (vol * ffa * 0.142 * factor) / 100;
     const naoh_excess = naoh_theoretical * 1.15;
     const lye_volume = naoh_excess / 0.16;
     const water_volume = lye_volume - naoh_excess;
@@ -1773,6 +1779,9 @@ function PriceCalculator({ user }) {
   const [oilType, setOilType] = useState('Soybean');
   const [batchSize, setBatchSize] = useState('30000');   // litres of finished oil per batch
   const [batchDays, setBatchDays] = useState('3');        // a batch lasts ~2–3 days
+  // How many batches you actually run in a month (overhead is spread over this, not
+  // assumed 24/7). Default 10 = a 3-day batch filling a 30-day month; edit if you run fewer.
+  const [batchesMonth, setBatchesMonth] = useState('10');
   // Fixed monthly labour & operations (₦ / month) — from the provided overhead sheet (editable)
   const [ovh, setOvh] = useState({
     manager:250000, marketing:200000, cleaner:40000, security:120000,
@@ -1781,8 +1790,9 @@ function PriceCalculator({ user }) {
   // Power is generated from a diesel plant: ~₦300,000 of diesel every 3 days (editable)
   const [dieselSpend, setDieselSpend] = useState('300000');
   const [dieselDays, setDieselDays]   = useState('3');
-  // Raw material (bulk purchase → effective ₦ per finished litre)
-  const [rawMaterial, setRawMaterial] = useState('3100'); // ₦/L of finished oil
+  // Crude oil purchase price (₦ per litre of crude). Finished-litre cost is crude ÷ yield.
+  const [rawMaterial, setRawMaterial] = useState('3100'); // ₦/L of crude oil
+  const [yieldPct, setYieldPct]       = useState('94');   // finished L / crude L, %
   // Each pack size has its OWN packaging cost (₦ per container) and its OWN share
   // of the batch (product mix %). Both are editable per pack size.
   const [packaging, setPackaging] = useState({ '40 cl':60, '1.5 L':180, '2.5 L':280, '5 L':480, '25 L':1800 });
@@ -1831,15 +1841,17 @@ function PriceCalculator({ user }) {
   const updateCustomOvh = (id, patch) => setCustomOvh(list=>list.map(x=>x.id===id?{...x,...patch}:x));
   const removeCustomOvh = (id) => setCustomOvh(list=>list.filter(x=>x.id!==id));
 
-  // Production basis — labour/overheads are paid monthly but a batch lasts 2–3 days.
-  // International best practice (absorption / full-cost costing): spread fixed monthly
-  // cost across the units of finished product produced that month.
-  const batchesPerMonth = num(batchDays)>0 ? DAYS_PER_MONTH/num(batchDays) : 0;
+  // Production basis — labour is paid monthly; diesel is burned while a batch runs.
+  // Absorption costing: spread those costs across the finished litres you actually
+  // produce (batches run × batch size), not a theoretical 24/7 calendar.
+  const autoBatchesPerMonth = num(batchDays)>0 ? DAYS_PER_MONTH/num(batchDays) : 0;
+  const batchesPerMonth = num(batchesMonth)>0 ? num(batchesMonth) : autoBatchesPerMonth;
   const monthlyVol = num(batchSize) * batchesPerMonth;
 
-  // Electricity from diesel: cost/day derived from spend-per-cycle, then monthly.
-  const dieselPerDay  = num(dieselDays)>0 ? num(dieselSpend)/num(dieselDays) : 0;
-  const dieselMonthly = dieselPerDay * DAYS_PER_MONTH;
+  // Diesel: ₦X every Y days of production → cost of one batch, then × batches run.
+  const dieselPerDay   = num(dieselDays)>0 ? num(dieselSpend)/num(dieselDays) : 0;
+  const dieselPerBatch = dieselPerDay * num(batchDays);
+  const dieselMonthly  = dieselPerBatch * batchesPerMonth;
 
   const salaryKeys = ['manager','marketing','cleaner','security','receptionist','analyst'];
   const labourMonthly    = salaryKeys.reduce((s,k)=>s+num(ovh[k]),0);
@@ -1856,7 +1868,8 @@ function PriceCalculator({ user }) {
 
   // Chemicals: bulk unit price × small dose per litre (only a little is used).
   const oilFactor = { Soybean:0.98, Groundnut:1.02 }[oilType] || 1;
-  const naohKgPerL  = num(ffaPct) * 0.142 * oilFactor * 1.15 / 1000;   // kg NaOH / L (incl. 15% excess)
+  // kg NaOH / L = (FFA% / 100) × 0.142 × oil factor × 1.15 excess. FFA is a percent, so /100.
+  const naohKgPerL  = num(ffaPct) * 0.142 * oilFactor * 1.15 / 100;
   const naohKgPerBatch = naohKgPerL * num(batchSize);
   const naohCostPerL = naohKgPerL * num(naohPricePerKg);              // auto-calculated
   const usePhos   = acidType==='Phosphoric' || acidType==='Both';
@@ -1871,8 +1884,13 @@ function PriceCalculator({ user }) {
   const vitDoseGPerL   = num(vitStockIU)>0 ? (0.92*1000*num(vitTargetIU)/num(vitStockIU))*1.10 : 0; // g/L incl. 10% excess
   const vitCostPerL    = vitDoseGPerL * (num(vitPricePerKg)/1000);    // g/L × ₦/g
   const chemPerL     = naohCostPerL + acidCostPerL + vitCostPerL;
-  // Oil contents cost per litre (raw material + chemicals + absorbed overhead) — excludes packaging.
-  const contentsPerL = num(rawMaterial) + chemPerL + overheadPerL;
+  // Crude ₦/L is the purchase price of unrefined oil. Refining losses (FFA/soapstock,
+  // gums, bleach, deodoriser) mean you need more than 1 L of crude per finished litre.
+  const suggestedYield = Math.max(80, Math.min(99, 100 - (num(ffaPct)*1.4 + 1.5))); // ~1.4×FFA + 1.5% other
+  const oilCostPerL  = num(yieldPct)>0 ? num(rawMaterial) / (num(yieldPct)/100) : 0;
+  const crudePerFinL = num(yieldPct)>0 ? 100/num(yieldPct) : 0;
+  // Oil contents cost per finished litre (crude÷yield + chemicals + absorbed overhead) — excludes packaging.
+  const contentsPerL = oilCostPerL + chemPerL + overheadPerL;
 
   // Per-pack pricing: each pack size adds its OWN packaging cost, so cost is NOT linear per litre.
   const packInfo = PACK_SIZES.map(p => {
@@ -1914,7 +1932,7 @@ function PriceCalculator({ user }) {
   const consumerPerL  = outVol>0 ? totalRRP/outVol : 0;
 
   const costItems = [
-    ['Raw Material (Oil)', num(rawMaterial)],
+    ['Raw Material (crude oil ÷ yield)', oilCostPerL],
     ['NaOH (neutralisation, auto)', naohCostPerL],
     ...(usePhos   ? [['Phosphoric Acid (degumming)', phosCostPerL]] : []),
     ...(useCitric ? [['Citric Acid (degumming)', citricCostPerL]] : []),
@@ -1953,7 +1971,7 @@ function PriceCalculator({ user }) {
     { title:'Packaging Cost & Recommended Prices by Pack Size',
       head:['Pack Size',{label:'Packaging ₦/unit',num:true},{label:'Production Cost (₦)',num:true}, ...channels.map(c=>({label:c.key+' (₦)',num:true}))],
       rows: packInfo.map(pi=>[pi.label, {num:true,text:fmtN(pi.pkg)}, {num:true,text:fmtN(pi.production)}, ...channels.map(c=>({num:true,text:fmtN(pi[c.field])}))]) },
-    { note:`Each pack size carries its OWN packaging cost, so prices are not a flat per-litre multiple. Production Cost = oil contents (${fmt(contentsPerL,2)}/L) x pack litres + that pack's packaging. Ex-Factory (Distributor) = production cost + ${profitPct}% profit; then +${distMargin}% -> Wholesaler, +${wholeMargin}% -> Retailer, +${retailMargin}% -> Consumer.` },
+    { note:`Each pack size carries its OWN packaging cost, so prices are not a flat per-litre multiple. Production Cost = oil contents (${fmt(contentsPerL,2)}/L) x pack litres + that pack's packaging. Oil contents = crude ${fmt(num(rawMaterial),2)}/L / ${fmt(num(yieldPct),1)}% yield (= ${fmt(oilCostPerL,2)}/finished L) + chemicals + overhead absorbed across ${fmt(batchesPerMonth,1)} batches/month x ${fmtN(num(batchSize))} L. Ex-Factory (Distributor) = production cost + ${profitPct}% profit; then +${distMargin}% -> Wholesaler, +${wholeMargin}% -> Retailer, +${retailMargin}% -> Consumer.` },
     { title:`Product Mix & Expected Profit — ${fmtN(outVol)} L output`,
       head:['Pack Size',{label:'% of Batch',num:true},{label:'Litres',num:true},{label:'Units',num:true},{label:'Prod. Cost (₦)',num:true},{label:'Ex-Factory Rev. (₦)',num:true},{label:'Profit (₦)',num:true}],
       rows:[...mixRows.map(r=>[r.label,{num:true,text:fmt(mixTotal>0?r.pct/mixTotal*100:0,1)+'%'},{num:true,text:fmtN(r.litres)},{num:true,text:fmtN(r.units)},{num:true,text:fmtN(r.prodTotal)},{num:true,text:fmtN(r.exRevenue)},{num:true,text:fmtN(r.profit)}]),
@@ -1979,7 +1997,7 @@ function PriceCalculator({ user }) {
       <div className="alert alert-info mb-16">
         <span className="alert-icon">ℹ</span>
         <div>Prices cascade from the ex-factory price using international best-practice trade margins
-        (<strong>Distributor → Wholesaler → Retailer → Consumer</strong>). Monthly labour and overheads are <strong>absorbed per litre</strong> across the output you actually produce each month (a batch lasts ~2–3 days), and power is derived from your <strong>diesel</strong> spend. All inputs below are editable.</div>
+        (<strong>Distributor → Wholesaler → Retailer → Consumer</strong>). <strong>Crude oil</strong> is converted to a finished-litre cost using your refining yield (losses from FFA/soapstock, gums, bleach). Monthly labour is absorbed across the litres from the batches you <strong>actually run</strong>; diesel is charged per batch (₦ spend × batch days / diesel cycle), not for idle calendar days. All inputs below are editable.</div>
       </div>
 
       <div className="grid-2">
@@ -1992,20 +2010,23 @@ function PriceCalculator({ user }) {
               </select>
             </div>
             <div className="field"><label>Batch Size (L / batch)</label><input type="number" value={batchSize} onChange={e=>setBatchSize(e.target.value)}/></div>
-            <div className="field"><label>Batch Duration (days)</label><input type="number" step="0.5" value={batchDays} onChange={e=>setBatchDays(e.target.value)}/><span className="field-hint">A batch lasts ~2–3 days</span></div>
-            <div className="field"><label>&nbsp;</label>
-              <div className="inline-info" style={{padding:'6px 0'}}><span className="ii-label">Batches / month</span><span className="ii-value">{fmt(batchesPerMonth,1)}</span></div>
-            </div>
+            <div className="field"><label>Batch Duration (days)</label><input type="number" step="0.5" value={batchDays} onChange={e=>setBatchDays(e.target.value)}/><span className="field-hint">How long one batch takes to refine</span></div>
+            <div className="field"><label>Batches run / month</label><input type="number" step="0.5" value={batchesMonth} onChange={e=>setBatchesMonth(e.target.value)}/><span className="field-hint">Overhead is spread over these batches{autoBatchesPerMonth>0?` · 24/7 would be ${fmt(autoBatchesPerMonth,1)}`:''}</span></div>
           </div>
           <div className="inline-info" style={{borderTop:'1px solid var(--border)',paddingTop:8}}>
             <span className="ii-label">Monthly finished output</span>
             <span className="ii-value" style={{color:'var(--accent)'}}>{fmtN(monthlyVol)} L</span>
           </div>
 
-          <div className="section-title" style={{marginTop:16}}>Raw Material (₦ per finished litre)</div>
+          <div className="section-title" style={{marginTop:16}}>Raw Material — Crude Oil → Finished Litre</div>
           <div className="form-grid cols-2">
-            <div className="field"><label>Raw Material — Oil (₦/L)</label><input type="number" value={rawMaterial} onChange={e=>setRawMaterial(e.target.value)}/></div>
-            <div className="field"><label>&nbsp;</label><div className="field-hint" style={{paddingTop:10}}>Packaging is set per pack size below ↓</div></div>
+            <div className="field"><label>Crude Oil Purchase Price (₦/L)</label><input type="number" value={rawMaterial} onChange={e=>setRawMaterial(e.target.value)}/><span className="field-hint">What you pay for 1 L of unrefined oil</span></div>
+            <div className="field"><label>Refining Yield (%)</label><input type="number" step="0.1" value={yieldPct} onChange={e=>setYieldPct(e.target.value)}/><span className="field-hint">Finished L per 100 L crude · typical at {fmt(num(ffaPct),1)}% FFA ≈ {fmt(suggestedYield,1)}%</span></div>
+          </div>
+          <div className="inline-info"><span className="ii-label">Crude needed per finished litre</span><span className="ii-value">{fmt(crudePerFinL,3)} L</span></div>
+          <div className="inline-info" style={{borderTop:'1px solid var(--accent)',paddingTop:8}}>
+            <span className="ii-label">Oil cost / finished litre (crude ÷ yield)</span>
+            <span className="ii-value" style={{color:'var(--accent)'}}>₦{fmt(oilCostPerL,2)}</span>
           </div>
 
           <div className="section-title" style={{marginTop:16}}>Chemicals — bought in bulk, dosed per litre</div>
@@ -2076,10 +2097,13 @@ function PriceCalculator({ user }) {
             <div className="field"><label>…every (days)</label><input type="number" step="0.5" value={dieselDays} onChange={e=>setDieselDays(e.target.value)}/><span className="field-hint">e.g. ₦300,000 every 3 days</span></div>
           </div>
           <div className="inline-info" style={{marginTop:6}}>
-            <span className="ii-label">Diesel / day</span><span className="ii-value">{fmtCur(dieselPerDay)}</span>
+            <span className="ii-label">Diesel / day of production</span><span className="ii-value">{fmtCur(dieselPerDay)}</span>
           </div>
           <div className="inline-info">
-            <span className="ii-label">Diesel / month (≈{DAYS_PER_MONTH} days)</span><span className="ii-value">{fmtCur(dieselMonthly)}</span>
+            <span className="ii-label">Diesel / batch ({fmt(num(batchDays),1)} days)</span><span className="ii-value">{fmtCur(dieselPerBatch)}</span>
+          </div>
+          <div className="inline-info">
+            <span className="ii-label">Diesel / month ({fmt(batchesPerMonth,1)} batches run)</span><span className="ii-value">{fmtCur(dieselMonthly)}</span>
           </div>
 
           <div className="inline-info" style={{marginTop:8,borderTop:'1px solid var(--accent)',paddingTop:8}}>
@@ -2130,6 +2154,37 @@ function PriceCalculator({ user }) {
           </table>
         </div>
         <div style={{fontSize:11,color:'var(--text3)',marginTop:8}}>Bigger packs (e.g. 25 L) have a higher packaging cost per unit but a much lower packaging cost <em>per litre</em>, so their production cost per litre is lower — this is now reflected in every price below.</div>
+      </div>
+
+      <div className="card">
+        <div className="section-title">Unit Cost Build-up — how oil &amp; overhead enter the price</div>
+        <div style={{fontSize:11,color:'var(--text3)',marginBottom:8}}>Every naira below is inside <strong>Production Cost / L</strong> and therefore inside every channel price. Crude oil is first converted to a finished-litre cost; monthly overhead is absorbed across {fmtN(monthlyVol)} L ({fmt(batchesPerMonth,1)} batches × {fmtN(num(batchSize))} L).</div>
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Cost Component</th><th style={{textAlign:'right'}}>₦ / Finished Litre</th><th style={{textAlign:'right'}}>Share of Production Cost</th><th style={{textAlign:'right'}}>₦ on a 25 L pack</th></tr></thead>
+            <tbody>
+              {costItems.map(([l,v])=>(
+                <tr key={l}>
+                  <td className="td-primary">{l}</td>
+                  <td className="td-mono" style={{textAlign:'right'}}>₦{fmt(v,2)}</td>
+                  <td className="td-mono" style={{textAlign:'right',color:'var(--text3)'}}>{costPerL?((v/costPerL)*100).toFixed(1):'0.0'}%</td>
+                  <td className="td-mono" style={{textAlign:'right',color:'var(--text3)'}}>{fmtCur(v*25)}</td>
+                </tr>
+              ))}
+              <tr style={{borderTop:'2px solid var(--accent)'}}>
+                <td className="td-primary" style={{color:'var(--accent)'}}>Production Cost / Litre</td>
+                <td className="td-mono" style={{textAlign:'right',color:'var(--accent)'}}>₦{fmt(costPerL,2)}</td>
+                <td className="td-mono" style={{textAlign:'right',color:'var(--accent)'}}>100.0%</td>
+                <td className="td-mono" style={{textAlign:'right',color:'var(--accent)'}}>{fmtCur(costPerL*25)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div style={{fontSize:11,color:'var(--text3)',marginTop:8}}>
+          Oil {fmtCur(oilCostPerL)}/L = {fmtCur(num(rawMaterial))} crude ÷ {fmt(num(yieldPct),1)}% yield.
+          Overhead {fmtCur(overheadPerL)}/L = {fmtCur(fixedMonthly)} / month ÷ {fmtN(monthlyVol)} L.
+          The 25 L column is the blended per-litre figure × 25 (packaging on a real 25 L keg is that keg's own container cost, shown in the price table below).
+        </div>
       </div>
 
       <div className="metrics-row cols-4 mb-16">
@@ -2202,7 +2257,7 @@ function PriceCalculator({ user }) {
           </table>
         </div>
         <div style={{fontSize:11,color:'var(--text3)',marginTop:8}}>
-          Each pack carries its <strong>own packaging cost</strong>, so <strong>Production Cost</strong> = oil contents (₦{fmt(contentsPerL,2)}/L) × pack litres + that pack's packaging (not a flat per-litre figure). <strong>Distributor (Ex-Factory)</strong> = production cost + your {profitPct}% profit; then +{distMargin}% → Wholesaler, +{wholeMargin}% → Retailer, +{retailMargin}% → Consumer (RRP).
+          Each pack carries its <strong>own packaging cost</strong>, so <strong>Production Cost</strong> = oil contents (₦{fmt(contentsPerL,2)}/L) × pack litres + that pack's packaging. Oil contents = crude ₦{fmt(num(rawMaterial),2)}/L ÷ {fmt(num(yieldPct),1)}% yield (₦{fmt(oilCostPerL,2)}/finished L) + chemicals + overhead. <strong>Distributor (Ex-Factory)</strong> = production cost + your {profitPct}% profit; then +{distMargin}% → Wholesaler, +{wholeMargin}% → Retailer, +{retailMargin}% → Consumer (RRP).
         </div>
       </div>
 
@@ -2257,7 +2312,7 @@ function PriceCalculator({ user }) {
 ══════════════════════════════════════════════════════════ */
 function CostDashboard({ inflationRate, marginAbove, batches, user }) {
   const [oilVol, setOilVol]     = useState('10000');
-  const [oilCost, setOilCost]   = useState('650');
+  const [oilCost, setOilCost]   = useState('3100');       // ₦ per litre of crude oil (same basis as Price Setting)
   const [naohCost, setNaohCost] = useState('1200');
   const [acidType, setAcidType] = useState('Phosphoric'); // Phosphoric | Citric | Both
   const [acidCost, setAcidCost] = useState('3500');       // phosphoric ₦/L
@@ -2268,7 +2323,9 @@ function CostDashboard({ inflationRate, marginAbove, batches, user }) {
   const [packCost, setPackCost] = useState('35000');
 
   const vol   = parseFloat(oilVol)||0;
-  const raw   = vol * parseFloat(oilCost) / 1000;
+  // Oil is priced per litre: total oil cost = litres × ₦/L. (Previously ÷1000 treated ₦/L
+  // as if it were ₦/tonne, which understated oil ~1000× so overhead dominated the price.)
+  const raw   = vol * (parseFloat(oilCost)||0);
   const acidTerm = acidType==='Phosphoric' ? parseFloat(acidCost)*0.025
                  : acidType==='Citric'     ? parseFloat(citricCost)*0.02
                  : parseFloat(acidCost)*0.025 + parseFloat(citricCost)*0.02;
@@ -2313,7 +2370,7 @@ function CostDashboard({ inflationRate, marginAbove, batches, user }) {
       rows:[['Ex-Factory',{num:true,text:fmt(exFac,2)},'Production cost per litre'],
         ['Wholesale',{num:true,text:fmt(wholesale,2)},`+${inflationRate+marginAbove}% margin over ex-factory`],
         ['Retail',{num:true,text:fmt(retail,2)},'+15% retail mark-up over wholesale']] },
-    { note:'Wholesale price applies the CEO-set effective margin (inflation + margin) above the ex-factory cost. Retail adds a further 15% distribution mark-up. Figures are indicative and should be validated against current market conditions before quotation.' },
+    { note:'Oil cost is litres × ₦ per litre (no per-tonne conversion). Labour, energy and packaging are batch overheads added in full, then the total is divided by batch litres to get ex-factory cost per litre. Wholesale applies the CEO-set effective margin (inflation + margin) above that cost. Retail adds a further 15% mark-up. Figures are indicative and should be validated against current market conditions before quotation.' },
   ];
 
   return (
@@ -2336,7 +2393,7 @@ function CostDashboard({ inflationRate, marginAbove, batches, user }) {
           <div className="section-title">Cost Inputs — per batch</div>
           <div className="form-grid cols-2">
             <div className="field"><label>Oil Volume (L)</label><input type="number" value={oilVol} onChange={e=>setOilVol(e.target.value)}/></div>
-            <div className="field"><label>Oil Cost (₦/L)</label><input type="number" value={oilCost} onChange={e=>setOilCost(e.target.value)}/></div>
+            <div className="field"><label>Oil Cost (₦/L)</label><input type="number" value={oilCost} onChange={e=>setOilCost(e.target.value)}/><span className="field-hint">Crude purchase price per litre × batch litres</span></div>
             <div className="field"><label>NaOH (₦/kg)</label><input type="number" value={naohCost} onChange={e=>setNaohCost(e.target.value)}/></div>
             <div className="field"><label>Degumming Acid</label>
               <select value={acidType} onChange={e=>setAcidType(e.target.value)}>
@@ -2346,9 +2403,21 @@ function CostDashboard({ inflationRate, marginAbove, batches, user }) {
             {(acidType==='Phosphoric'||acidType==='Both') && <div className="field"><label>Phosphoric Acid (₦/L)</label><input type="number" value={acidCost} onChange={e=>setAcidCost(e.target.value)}/></div>}
             {(acidType==='Citric'||acidType==='Both') && <div className="field"><label>Citric Acid (₦/kg)</label><input type="number" value={citricCost} onChange={e=>setCitricCost(e.target.value)}/></div>}
             <div className="field"><label>Vitamin A Conc. (₦/kg)</label><input type="number" value={vitACost} onChange={e=>setVitACost(e.target.value)}/></div>
-            <div className="field"><label>Labour (₦ flat)</label><input type="number" value={laborCost} onChange={e=>setLaborCost(e.target.value)}/></div>
-            <div className="field"><label>Energy (₦ flat)</label><input type="number" value={energyCost} onChange={e=>setEnergyCost(e.target.value)}/></div>
-            <div className="field"><label>Packaging (₦ flat)</label><input type="number" value={packCost} onChange={e=>setPackCost(e.target.value)}/></div>
+            <div className="field"><label>Labour (₦ / batch)</label><input type="number" value={laborCost} onChange={e=>setLaborCost(e.target.value)}/><span className="field-hint">Batch overhead — added in full to this run</span></div>
+            <div className="field"><label>Energy (₦ / batch)</label><input type="number" value={energyCost} onChange={e=>setEnergyCost(e.target.value)}/><span className="field-hint">Batch overhead (diesel, power, utilities)</span></div>
+            <div className="field"><label>Packaging (₦ / batch)</label><input type="number" value={packCost} onChange={e=>setPackCost(e.target.value)}/></div>
+          </div>
+          <div className="inline-info" style={{marginTop:12,borderTop:'1px solid var(--accent)',paddingTop:8}}>
+            <span className="ii-label">Oil for this batch</span>
+            <span className="ii-value" style={{color:'var(--accent)'}}>{fmtN(vol)} L × ₦{fmt(parseFloat(oilCost)||0,2)}/L = {fmtCur(raw)}</span>
+          </div>
+          <div className="inline-info">
+            <span className="ii-label">Batch overhead (labour + energy + pack)</span>
+            <span className="ii-value">{fmtCur(labor+energy+pack)}</span>
+          </div>
+          <div className="inline-info">
+            <span className="ii-label">Oil share of production cost</span>
+            <span className="ii-value">{total?((raw/total)*100).toFixed(1):'0.0'}%</span>
           </div>
         </div>
 
@@ -2365,7 +2434,7 @@ function CostDashboard({ inflationRate, marginAbove, batches, user }) {
           </div>
           {items.map(([l,v])=>(
             <div key={l} className="inline-info">
-              <span className="ii-label">{l}</span>
+              <span className="ii-label">{l}{vol>0?` · ₦${fmt(v/vol,2)}/L`:''}</span>
               <span className="ii-value">{fmtCur(v)}</span>
             </div>
           ))}
